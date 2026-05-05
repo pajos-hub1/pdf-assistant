@@ -1,0 +1,19 @@
+LLM - Ollama + Llama (OpenAI)
+Embedding - Huggingface 
+Vector-Store (FAISS)
+API layer - FastAPI
+
+System Architecture 
+- User upload the pdf 
+- Each chunks is converted to a vector. 
+- Vectors are stored in FAISS 
+- User asks a question 
+- FAISS finds the top 3-5 most similar chunks
+- Chunks and the question is sent to Ollama as context. 
+- LLM generates a grounded answer and returns it via FastAPI endpoint. 
+
+
+
+ingestor.py - loading pdf , chucj - embed and store in FAISS.
+chain.py - retreive the chuncks- build prompts - call ollama - return answer. 
+main.py - HTTP API /upload, /ask/ /health endpoints. 

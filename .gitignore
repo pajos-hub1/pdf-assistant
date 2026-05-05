@@ -1,0 +1,23 @@
+# Python
+env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Data & indexes — never commit PDFs or FAISS indexes
+data/
+*.pdf
+
+# Environment secrets
+.env
+
+# Mac
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+EOF
