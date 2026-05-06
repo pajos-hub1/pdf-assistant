@@ -17,3 +17,8 @@ System Architecture
 ingestor.py - loading pdf , chucj - embed and store in FAISS.
 chain.py - retreive the chuncks- build prompts - call ollama - return answer. 
 main.py - HTTP API /upload, /ask/ /health endpoints. 
+
+
+sk-f5f31eab22b143929121d1550e18bc2d
+
+73cf36f6-09a9-4144-a88a-ee7f283eb3c2

@@ -1,1 +1,14 @@
 2026-05-06 01:19:58 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:19:58.650076", "message": "PDF Assistant server started"}
+2026-05-06 01:22:57 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:22:57.973412", "message": "PDF Assistant server started"}
+2026-05-06 01:26:16 | INFO | {"event": "session_created", "timestamp": "2026-05-06T00:26:16.441456", "session_id": "1f1dfee4-d225-4487-bfdf-4b5ebaa200cf", "owner": "Joseph"}
+2026-05-06 01:30:02 | INFO | {"event": "upload", "timestamp": "2026-05-06T00:30:02.688928", "session_id": "1f1dfee4-d225-4487-bfdf-4b5ebaa200cf", "owner": "Joseph", "filename": "Computer Graphics Class Note.pdf", "num_pages": 5, "status": "done", "duration_ms": 226246.51}
+2026-05-06 01:35:38 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:35:38.578340", "message": "PDF Assistant server started"}
+2026-05-06 01:37:12 | INFO | {"event": "session_created", "timestamp": "2026-05-06T00:37:12.886884", "session_id": "73cf36f6-09a9-4144-a88a-ee7f283eb3c2", "owner": "Joseph"}
+2026-05-06 01:39:14 | INFO | {"event": "upload", "timestamp": "2026-05-06T00:39:14.681473", "session_id": "73cf36f6-09a9-4144-a88a-ee7f283eb3c2", "owner": "Joseph", "filename": "Artificial Intelligence Notes.pdf", "num_pages": 5, "status": "done", "duration_ms": 121790.51}
+2026-05-06 01:40:42 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:40:42.523225", "message": "PDF Assistant server started"}
+2026-05-06 01:40:46 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:40:46.691226", "message": "PDF Assistant server started"}
+2026-05-06 01:46:13 | INFO | {"event": "session_created", "timestamp": "2026-05-06T00:46:13.448402", "session_id": "73cf36f6-09a9-4144-a88a-ee7f283eb3c2", "owner": "Joseph"}
+2026-05-06 01:47:58 | INFO | {"event": "upload", "timestamp": "2026-05-06T00:47:58.685405", "session_id": "73cf36f6-09a9-4144-a88a-ee7f283eb3c2", "owner": "Joseph", "filename": "Artificial Intelligence Notes.pdf", "num_pages": 5, "status": "done", "duration_ms": 105227.41}
+2026-05-06 01:48:42 | INFO | {"event": "query", "timestamp": "2026-05-06T00:48:42.281310", "session_id": "73cf36f6-09a9-4144-a88a-ee7f283eb3c2", "owner": "Joseph", "question": "Explain AI.", "answer_length": 974, "language": "English", "confidence": "48.0%", "sources": [1, 2, 8], "duration_ms": 9141.18}
+2026-05-06 01:53:24 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:53:24.845104", "message": "PDF Assistant server started"}
+2026-05-06 01:53:29 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:53:29.333725", "message": "PDF Assistant server started"}

@@ -1,26 +1,16 @@
-from fastapi import Security, HTTPException, status, Depends
+from fastapi import Security, HTTPException, status, Depends, Header
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 from app.database import get_db, APIKey, get_or_create_session
-from datetime import datetime
+from typing import Optional
 
-# Header name the client must send
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-
-# ─────────────────────────────────────────
-# CORE VALIDATION
-# ─────────────────────────────────────────
 
 def validate_api_key(
     api_key: str = Security(API_KEY_HEADER),
     db: Session = Depends(get_db)
 ) -> APIKey:
-    """
-    Validates the API key sent in the request header.
-    Raises 401 if missing or invalid.
-    Raises 403 if key exists but is deactivated.
-    """
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -28,7 +18,6 @@ def validate_api_key(
             headers={"WWW-Authenticate": "API-Key"}
         )
 
-    # Look up key in database
     db_key = db.query(APIKey).filter(APIKey.key == api_key).first()
 
     if not db_key:
@@ -48,15 +37,21 @@ def validate_api_key(
 
 
 def get_current_session(
-    session_id: str = None,
+    # Read session_id from header — optional, creates new if not provided
+    session_id: Optional[str] = Header(None, alias="X-Session-Id"),
     api_key: APIKey = Depends(validate_api_key),
     db: Session = Depends(get_db)
 ):
     """
     Gets or creates a session for the current user.
-    Returns both the session and the api_key owner.
+    Session ID comes from X-Session-Id header.
+    If not provided, a new session is created automatically.
     """
-    session = get_or_create_session(db, api_key_id=api_key.id, session_id=session_id)
+    session = get_or_create_session(
+        db,
+        api_key_id=api_key.id,
+        session_id=session_id
+    )
     return {
         "session": session,
         "owner": api_key.owner_name,

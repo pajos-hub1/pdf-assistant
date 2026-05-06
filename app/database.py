@@ -134,11 +134,10 @@ def create_api_key(owner_name: str, key: str = None) -> str:
 
 
 def get_or_create_session(db, api_key_id: int, session_id: str = None) -> Session:
-    """Get existing session or create a new one."""
     if session_id:
         session = db.query(Session).filter(Session.id == session_id).first()
         if session:
-            session.last_active = datetime.utcnow
+            session.last_active = datetime.utcnow()
             db.commit()
             return session
 

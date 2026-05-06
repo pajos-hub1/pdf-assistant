@@ -9,6 +9,7 @@ __pycache__/
 
 # Data & indexes — never commit PDFs or FAISS indexes
 data/
+logs/
 *.pdf
 
 # Environment secrets
