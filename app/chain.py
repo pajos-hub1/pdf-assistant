@@ -6,26 +6,155 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
+from sqlalchemy.orm import Session as DBSession
+from app.database import SessionLocal, ChatHistory
+import requests
 
-# In-memory session store
-store = {}
+
+# ─────────────────────────────────────────
+# DB-BACKED SESSION HISTORY
+# ─────────────────────────────────────────
+
+class DBChatMessageHistory(BaseChatMessageHistory):
+    """
+    Replaces the in-memory store = {} with database-backed history.
+    Each session_id loads its own history from the DB.
+    """
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self._messages = []
+        self._load_from_db()
+
+    def _load_from_db(self):
+        """Load existing chat history from DB on initialization."""
+        from langchain_core.messages import HumanMessage, AIMessage
+        db = SessionLocal()
+        try:
+            records = (
+                db.query(ChatHistory)
+                .filter(ChatHistory.session_id == self.session_id)
+                .order_by(ChatHistory.created_at.asc())
+                .all()
+            )
+            for record in records:
+                self._messages.append(HumanMessage(content=record.question))
+                self._messages.append(AIMessage(content=record.answer))
+            print(f"📚 Loaded {len(records)} messages from DB for session {self.session_id}")
+        finally:
+            db.close()
+
+    @property
+    def messages(self):
+        return self._messages
+
+    def add_message(self, message):
+        self._messages.append(message)
+
+    def clear(self):
+        """Clear in-memory messages — DB records cleared separately via endpoint."""
+        self._messages = []
+
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    if session_id not in store:
-        store[session_id] = ChatMessageHistory()
-    return store[session_id]
+    """
+    Returns DB-backed chat history for a session.
+    Each user gets their own isolated history.
+    """
+    return DBChatMessageHistory(session_id=session_id)
+
+
+# ─────────────────────────────────────────
+# OLLAMA HELPER
+# ─────────────────────────────────────────
+
+def ollama_call(prompt: str) -> str:
+    """Generic reusable Ollama call."""
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "llama3.2",
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=60
+        )
+        return response.json().get("response", "").strip()
+    except Exception as e:
+        print(f"⚠️  Ollama call failed: {e}")
+        return ""
+
+
+# ─────────────────────────────────────────
+# PHASE 2 FEATURES
+# ─────────────────────────────────────────
+
+def detect_language(text: str) -> str:
+    """Detect the language of the user's question."""
+    result = ollama_call(
+        f"Detect the language of this text and return ONLY the language name, "
+        f"nothing else. For example: 'English', 'French', 'Spanish', 'Arabic'.\n\n"
+        f"Text: {text}"
+    )
+    print(f"🌐 Detected language: {result}")
+    return result or "English"
+
+
+def generate_summary(chunks: list) -> str:
+    """Summarize the document using the first few chunks."""
+    sample_text = "\n\n".join([c.page_content for c in chunks[:6]])
+    summary = ollama_call(
+        f"You are a document summarizer. Read the following text extracted from a document "
+        f"and provide a clear, concise summary in 3-5 sentences covering the main topics.\n\n"
+        f"Text:\n{sample_text}\n\nSummary:"
+    )
+    return summary or "Summary not available."
+
+
+def generate_suggestions(question: str, answer: str) -> list:
+    """Generate 3 follow-up question suggestions based on the Q&A."""
+    result = ollama_call(
+        f"Based on this question and answer, suggest exactly 3 short follow-up questions "
+        f"the user might want to ask next. Return ONLY the 3 questions, one per line, "
+        f"no numbering, no extra text.\n\n"
+        f"Question: {question}\n"
+        f"Answer: {answer}\n\n"
+        f"3 Follow-up questions:"
+    )
+    suggestions = [q.strip() for q in result.split("\n") if q.strip()][:3]
+    return suggestions
+
+
+def calculate_confidence(scores: list) -> str:
+    """Convert FAISS similarity scores to a confidence percentage."""
+    if not scores:
+        return "0%"
+    similarities = [1 / (1 + score) for score in scores]
+    avg = sum(similarities) / len(similarities)
+    percentage = round(avg * 100, 1)
+    return f"{percentage}%"
+
+
+# ─────────────────────────────────────────
+# RAG CHAIN
+# ─────────────────────────────────────────
 
 SYSTEM_PROMPT = """
 You are a helpful document assistant.
 Use the context below to answer the question as thoroughly as possible.
-If the answer is partially in the context, use what is available and indicate if more detail is not in the document.
-Only say "I don't have enough information in this document" if there is absolutely nothing relevant in the context.
+Always answer in {language}.
+If the answer is partially in the context, use what is available and indicate 
+if more detail is not in the document.
+Only say "I don't have enough information in this document" if there is 
+absolutely nothing relevant in the context.
 
 Context:
 {context}
 """
 
+
 def build_qa_chain(vector_store: FAISS):
+    """Build the RAG chain with DB-backed memory."""
     retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
     llm = ChatOllama(
@@ -39,21 +168,11 @@ def build_qa_chain(vector_store: FAISS):
         ("human", "{question}"),
     ])
 
-    def retrieve_and_format(inputs):
-        question = inputs["question"]
-        docs = retriever.invoke(question)
-        context = "\n\n".join([doc.page_content for doc in docs])
-        sources = sorted(set([doc.metadata.get("page", "unknown") for doc in docs]))
-        return {
-            "context": context,
-            "question": question,
-            "sources": sources
-        }
-
     chain = (
         RunnablePassthrough.assign(
-            context=lambda x: retrieve_and_format(x)["context"],
-            sources=lambda x: retrieve_and_format(x)["sources"]
+            context=lambda x: "\n\n".join([
+                doc.page_content for doc in retriever.invoke(x["question"])
+            ]),
         )
         | prompt
         | llm
@@ -62,7 +181,7 @@ def build_qa_chain(vector_store: FAISS):
 
     chain_with_history = RunnableWithMessageHistory(
         chain,
-        get_session_history,
+        get_session_history,  # ← now DB-backed, not in-memory dict
         input_messages_key="question",
         history_messages_key="chat_history",
     )
