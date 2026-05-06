@@ -54,10 +54,10 @@ http://127.0.0.1:8000/docs
 | GET | `/history` | Get chat history |
 | DELETE | `/history` | Clear chat history |
 | DELETE | `/documents` | Clear all documents |
-POST /auth/register  → get api_key
-POST /upload         → get session_id + doc_id
-GET  /status/{id}    → wait for "done"
-POST /ask            → ask questions
+|POST |/auth/register | get api_key
+|POST |/upload         | get session_id + doc_id
+|GET  |/status/{id}    | wait for "done"
+|POST |/ask            | ask questions
 
 ## Features
 - Scanned & handwritten PDF support via OCR
