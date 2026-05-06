@@ -17,6 +17,8 @@ from app.database import (
     save_chat,
     save_document,
     create_api_key,
+    register_user,
+    login_user, 
     ChatHistory,
     Document,
 )
@@ -27,7 +29,9 @@ from app.tasks import (
     get_session_chain,
     get_session_store,
     get_document_status,
-    clear_session_data
+    clear_session_data,
+    session_chains,   # ← add these two
+    session_stores    # ← add these two
 )
 from app.chain import (
     generate_suggestions,
@@ -69,6 +73,12 @@ class QuestionRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     owner_name: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 
 # ─────────────────────────────────────────
@@ -77,9 +87,52 @@ class RegisterRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """Initialize DB and log startup."""
+    """Initialize DB and reload existing sessions from disk."""
     init_db()
     log_startup()
+
+    from app.database import SessionLocal, Document
+    from app.chain import build_qa_chain
+    from langchain_huggingface import HuggingFaceEmbeddings
+    from langchain_community.vectorstores import FAISS
+
+    db = SessionLocal()
+    try:
+        completed_docs = (
+            db.query(Document)
+            .filter(Document.status == "done")
+            .all()
+        )
+
+        session_ids = list(set([doc.session_id for doc in completed_docs]))
+
+        if session_ids:
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2"
+            )
+
+            for session_id in session_ids:
+                faiss_path = f"data/{session_id}/faiss_index"
+                if os.path.exists(faiss_path):
+                    try:
+                        vector_store = FAISS.load_local(
+                            faiss_path,
+                            embeddings,
+                            allow_dangerous_deserialization=True
+                        )
+                        chain, retriever = build_qa_chain(vector_store)
+                        session_stores[session_id] = vector_store
+                        session_chains[session_id] = {
+                            "chain": chain,
+                            "retriever": retriever
+                        }
+                        print(f"✅ Reloaded session: {session_id}")
+                    except Exception as e:
+                        print(f"⚠️  Failed to reload session {session_id}: {e}")
+
+    finally:
+        db.close()
+
     print("✅ PDF Assistant is ready")
 
 
@@ -98,25 +151,36 @@ async def health():
     }
 
 
-@app.post("/auth/register", tags=["Public"])
-async def register(request: RegisterRequest, db: Session = Depends(get_db)):
-    """
-    Register and get an API key.
-    Pass this key as X-API-Key header in all future requests.
-    """
-    key = create_api_key(owner_name=request.owner_name)
+@app.post("/auth/register", tags=["Auth"])
+async def register(request: RegisterRequest):
+    """Register with name, email and password."""
+    result = register_user(
+        owner_name=request.owner_name,
+        email=request.email,
+        password=request.password
+    )
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
     return {
         "message": "✅ Registration successful",
-        "owner": request.owner_name,
-        "api_key": key,
-        "instructions": {
-            "step1": "Copy your api_key above",
-            "step2": "Click Authorize at the top of Swagger UI",
-            "step3": "Paste your key and click Authorize",
-            "step4": "All protected endpoints now work automatically"
-        }
+        "owner": result["owner"],
+        "email": result["email"],
+        "api_key": result["api_key"]
     }
 
+
+@app.post("/auth/login", tags=["Auth"])
+async def login(request: LoginRequest):
+    """Login with email and password — returns your existing API key."""
+    result = login_user(email=request.email, password=request.password)
+    if "error" in result:
+        raise HTTPException(status_code=401, detail=result["error"])
+    return {
+        "message": "✅ Login successful",
+        "owner": result["owner"],
+        "email": result["email"],
+        "api_key": result["api_key"]
+    }
 
 # ─────────────────────────────────────────
 # PROTECTED ENDPOINTS — auth required
@@ -274,38 +338,32 @@ async def ask_question(
     db: Session = Depends(get_db),
     auth: dict = Depends(get_current_session)
 ):
-    """
-    Ask a question about your uploaded document.
-    Rate limited to 10 requests per minute.
-
-    Headers required:
-    - X-API-Key: your api key
-    - X-Session-Id: your session id
-    """
     session = auth["session"]
     owner = auth["owner"]
     start_time = time.time()
 
-    # Check if document processing is complete
     session_data = get_session_chain(session.id)
     if not session_data:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "❌ No document ready yet. "
-                "Upload a PDF and wait for status to be 'done' "
-                "before asking questions."
-            )
+            detail="❌ No document ready yet. Upload a PDF and wait for status to be 'done'."
         )
+    session_data = get_session_chain(session.id)
+    print(f"DEBUG: Looking for session {session.id}")
+    print(f"DEBUG: Available sessions: {list(session_chains.keys())}")
+    if not session_data:
+        raise HTTPException(...)
 
     chain = session_data["chain"]
     vector_store = get_session_store(session.id)
 
     try:
-        # Feature 4: Detect language of question
+        # Detect language with fallback
         language = detect_language(body.question)
+        if not language or language.lower() == "none":
+            language = "English"
 
-        # Feature 2: Get docs with confidence scores
+        # Get docs with confidence scores
         docs_with_scores = vector_store.similarity_search_with_score(
             body.question, k=5
         )
@@ -313,12 +371,11 @@ async def ask_question(
         scores = [score for doc, score in docs_with_scores]
         confidence = calculate_confidence(scores)
 
-        # Get source pages
         sources = sorted(set([
             doc.metadata.get("page", "unknown") for doc in docs
         ]))
 
-        # Invoke RAG chain with DB-backed memory per session
+        # Invoke RAG chain
         answer = chain.invoke(
             {
                 "question": body.question,
@@ -327,10 +384,14 @@ async def ask_question(
             config={"configurable": {"session_id": session.id}}
         )
 
-        # Feature 3: Generate follow-up suggestions
+        # Guard against None answer
+        if not answer or answer.strip().lower() == "none":
+            answer = "I could not generate a response. Please try rephrasing your question."
+
+        # Generate suggestions
         suggestions = generate_suggestions(body.question, answer)
 
-        # Save Q&A to DB — replaces chat_history = []
+        # Save to DB
         save_chat(
             db=db,
             session_id=session.id,
@@ -342,7 +403,6 @@ async def ask_question(
             suggestions=suggestions
         )
 
-        # Log query to analytics.log
         duration_ms = (time.time() - start_time) * 1000
         log_query(
             session_id=session.id,
@@ -366,6 +426,7 @@ async def ask_question(
         }
 
     except Exception as e:
+        print(f"❌ /ask error: {str(e)}")
         log_error(
             session_id=session.id,
             owner=owner,
@@ -374,9 +435,8 @@ async def ask_question(
         )
         raise HTTPException(
             status_code=500,
-            detail=f"❌ Error processing question: {str(e)}"
+            detail=f"❌ Error: {str(e)}"
         )
-
 
 @app.get("/history", tags=["QA"])
 async def get_history(
@@ -415,6 +475,30 @@ async def get_history(
         ]
     }
 
+@app.get("/auth/me", tags=["Auth"])
+async def get_me(
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """
+    Returns the current user's info and their last active session.
+    Called after login to restore session.
+    """
+    from app.database import Session as DBSession
+    
+    # Get the most recent session for this user
+    last_session = (
+        db.query(DBSession)
+        .filter(DBSession.api_key_id == auth.id)
+        .order_by(DBSession.last_active.desc())
+        .first()
+    )
+    
+    return {
+        "owner": auth.owner_name,
+        "email": auth.email,
+        "session_id": last_session.id if last_session else None
+    }
 
 @app.delete("/history", tags=["QA"])
 async def clear_history(

@@ -12,3 +12,51 @@
 2026-05-06 01:48:42 | INFO | {"event": "query", "timestamp": "2026-05-06T00:48:42.281310", "session_id": "73cf36f6-09a9-4144-a88a-ee7f283eb3c2", "owner": "Joseph", "question": "Explain AI.", "answer_length": 974, "language": "English", "confidence": "48.0%", "sources": [1, 2, 8], "duration_ms": 9141.18}
 2026-05-06 01:53:24 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:53:24.845104", "message": "PDF Assistant server started"}
 2026-05-06 01:53:29 | INFO | {"event": "startup", "timestamp": "2026-05-06T00:53:29.333725", "message": "PDF Assistant server started"}
+2026-05-06 02:23:46 | INFO | {"event": "session_created", "timestamp": "2026-05-06T01:23:46.317718", "session_id": "c8b9afb5-e6ae-460d-b9dd-81424df7c9c1", "owner": "Joseph"}
+2026-05-06 02:32:15 | INFO | {"event": "upload", "timestamp": "2026-05-06T01:32:15.650962", "session_id": "c8b9afb5-e6ae-460d-b9dd-81424df7c9c1", "owner": "Joseph", "filename": "Artificial Intelligence Notes.pdf", "num_pages": 5, "status": "done", "duration_ms": 509331.56}
+2026-05-06 02:33:02 | INFO | {"event": "query", "timestamp": "2026-05-06T01:33:02.795263", "session_id": "c8b9afb5-e6ae-460d-b9dd-81424df7c9c1", "owner": "Joseph", "question": "Explain AI.", "answer_length": 5, "language": "None", "confidence": "48.70000076293945%", "sources": [1, 2, 3, 4], "duration_ms": 8634.87}
+2026-05-06 02:36:03 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:36:03.875583", "message": "PDF Assistant server started"}
+2026-05-06 02:36:19 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:36:19.698377", "message": "PDF Assistant server started"}
+2026-05-06 02:37:21 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:37:21.179292", "message": "PDF Assistant server started"}
+2026-05-06 02:39:51 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:39:51.674762", "message": "PDF Assistant server started"}
+2026-05-06 02:39:55 | INFO | {"event": "session_created", "timestamp": "2026-05-06T01:39:55.006630", "session_id": "c8b9afb5-e6ae-460d-b9dd-81424df7c9c1", "owner": "Joseph"}
+2026-05-06 02:42:25 | INFO | {"event": "upload", "timestamp": "2026-05-06T01:42:25.547096", "session_id": "c8b9afb5-e6ae-460d-b9dd-81424df7c9c1", "owner": "Joseph", "filename": "Fundamentals of Software Engineering, Fourth Edition, Rajib Mall.pdf", "num_pages": 5, "status": "done", "duration_ms": 150538.0}
+2026-05-06 02:42:43 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:42:43.818329", "message": "PDF Assistant server started"}
+2026-05-06 02:46:17 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:46:17.380395", "message": "PDF Assistant server started"}
+2026-05-06 02:47:23 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:47:23.710320", "message": "PDF Assistant server started"}
+2026-05-06 02:47:40 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:47:40.759480", "message": "PDF Assistant server started"}
+2026-05-06 02:47:57 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:47:57.000124", "message": "PDF Assistant server started"}
+2026-05-06 02:48:11 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:48:11.809008", "message": "PDF Assistant server started"}
+2026-05-06 02:48:35 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:48:35.533958", "message": "PDF Assistant server started"}
+2026-05-06 02:53:31 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:53:31.548455", "message": "PDF Assistant server started"}
+2026-05-06 02:53:47 | INFO | {"event": "startup", "timestamp": "2026-05-06T01:53:47.075554", "message": "PDF Assistant server started"}
+2026-05-06 11:31:18 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:31:18.228351", "message": "PDF Assistant server started"}
+2026-05-06 11:33:14 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:33:14.859334", "message": "PDF Assistant server started"}
+2026-05-06 11:35:54 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:35:54.162030", "message": "PDF Assistant server started"}
+2026-05-06 11:36:14 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:36:14.784550", "message": "PDF Assistant server started"}
+2026-05-06 11:37:57 | INFO | {"event": "session_created", "timestamp": "2026-05-06T10:37:57.839487", "session_id": "40377d97-fad0-4120-b1f4-5fe2b276fa7a", "owner": "Adeoye"}
+2026-05-06 11:38:50 | INFO | {"event": "upload", "timestamp": "2026-05-06T10:38:50.526480", "session_id": "40377d97-fad0-4120-b1f4-5fe2b276fa7a", "owner": "Adeoye", "filename": "Fundamentals of Software Engineering, Fourth Edition, Rajib Mall.pdf", "num_pages": 5, "status": "done", "duration_ms": 52684.89}
+2026-05-06 11:39:31 | INFO | {"event": "query", "timestamp": "2026-05-06T10:39:31.919029", "session_id": "40377d97-fad0-4120-b1f4-5fe2b276fa7a", "owner": "Adeoye", "question": "Explain Software", "answer_length": 1599, "language": "English", "confidence": "56.29999923706055%", "sources": [31, 127, 261], "duration_ms": 12147.77}
+2026-05-06 11:41:18 | INFO | {"event": "query", "timestamp": "2026-05-06T10:41:18.634569", "session_id": "40377d97-fad0-4120-b1f4-5fe2b276fa7a", "owner": "Adeoye", "question": "What is the purpose of a requirements specification document in professional software development?", "answer_length": 1430, "language": "English", "confidence": "61.5%", "sources": [6, 237, 273, 275, 276], "duration_ms": 27079.56}
+2026-05-06 11:45:12 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:45:12.233064", "message": "PDF Assistant server started"}
+2026-05-06 11:55:43 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:55:43.952666", "message": "PDF Assistant server started"}
+2026-05-06 11:56:27 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:56:27.781092", "message": "PDF Assistant server started"}
+2026-05-06 11:56:55 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:56:55.290279", "message": "PDF Assistant server started"}
+2026-05-06 11:57:12 | INFO | {"event": "startup", "timestamp": "2026-05-06T10:57:12.058916", "message": "PDF Assistant server started"}
+2026-05-06 12:01:02 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:01:02.625675", "message": "PDF Assistant server started"}
+2026-05-06 12:03:01 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:03:01.164867", "message": "PDF Assistant server started"}
+2026-05-06 12:03:04 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:03:04.996338", "message": "PDF Assistant server started"}
+2026-05-06 12:03:49 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:03:49.769588", "message": "PDF Assistant server started"}
+2026-05-06 12:05:10 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:05:10.458162", "message": "PDF Assistant server started"}
+2026-05-06 12:06:34 | INFO | {"event": "session_created", "timestamp": "2026-05-06T11:06:34.176947", "session_id": "2c33223d-83f4-40a1-8ffe-40c9b733cfbf", "owner": "Joseph Ogunye"}
+2026-05-06 12:06:57 | INFO | {"event": "upload", "timestamp": "2026-05-06T11:06:57.486053", "session_id": "2c33223d-83f4-40a1-8ffe-40c9b733cfbf", "owner": "Joseph Ogunye", "filename": "Theory and Problems of Software Engineering.pdf", "num_pages": 5, "status": "done", "duration_ms": 23308.01}
+2026-05-06 12:09:48 | INFO | {"event": "query", "timestamp": "2026-05-06T11:09:48.308113", "session_id": "2c33223d-83f4-40a1-8ffe-40c9b733cfbf", "owner": "Joseph Ogunye", "question": "What is Software engineering?", "answer_length": 869, "language": "English", "confidence": "49.900001525878906%", "sources": [2, 12, 15, 47, 85], "duration_ms": 7643.38}
+2026-05-06 12:11:34 | INFO | {"event": "query", "timestamp": "2026-05-06T11:11:34.437416", "session_id": "2c33223d-83f4-40a1-8ffe-40c9b733cfbf", "owner": "Joseph Ogunye", "question": "What are some key principles and techniques used in software engineering?", "answer_length": 942, "language": "English", "confidence": "50.79999923706055%", "sources": [2, 12, 45, 46], "duration_ms": 9382.72}
+2026-05-06 12:16:30 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:16:30.521411", "message": "PDF Assistant server started"}
+2026-05-06 12:17:34 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:17:34.719384", "message": "PDF Assistant server started"}
+2026-05-06 12:22:46 | INFO | {"event": "startup", "timestamp": "2026-05-06T11:22:46.656310", "message": "PDF Assistant server started"}
+2026-05-06 12:23:10 | INFO | {"event": "session_created", "timestamp": "2026-05-06T11:23:10.316186", "session_id": "0222d5bc-122b-4227-9804-14c533be37dd", "owner": "Joseph Ogunye"}
+2026-05-06 12:23:58 | INFO | {"event": "upload", "timestamp": "2026-05-06T11:23:58.425972", "session_id": "0222d5bc-122b-4227-9804-14c533be37dd", "owner": "Joseph Ogunye", "filename": "Theory and Problems of Software Engineering.pdf", "num_pages": 5, "status": "done", "duration_ms": 48108.75}
+2026-05-06 12:31:13 | INFO | {"event": "query", "timestamp": "2026-05-06T11:31:13.194314", "session_id": "0222d5bc-122b-4227-9804-14c533be37dd", "owner": "Joseph Ogunye", "question": "What is SE?", "answer_length": 35, "language": "English", "confidence": "39.5%", "sources": [32, 46, 71, 235], "duration_ms": 15578.51}
+2026-05-06 12:31:42 | INFO | {"event": "query", "timestamp": "2026-05-06T11:31:42.191039", "session_id": "0222d5bc-122b-4227-9804-14c533be37dd", "owner": "Joseph Ogunye", "question": "Explain it more.", "answer_length": 238, "language": "None (Unknown/Undetermined)", "confidence": "39.099998474121094%", "sources": [2, 12, 91, 159, 163], "duration_ms": 18661.35}
+2026-05-06 12:32:46 | INFO | {"event": "query", "timestamp": "2026-05-06T11:32:46.100837", "session_id": "0222d5bc-122b-4227-9804-14c533be37dd", "owner": "Joseph Ogunye", "question": "What specific areas of software engineering are being covered?", "answer_length": 771, "language": "English", "confidence": "47.79999923706055%", "sources": [2, 12, 14, 104, 130], "duration_ms": 35920.03}

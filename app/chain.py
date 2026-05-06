@@ -97,13 +97,22 @@ def ollama_call(prompt: str) -> str:
 
 def detect_language(text: str) -> str:
     """Detect the language of the user's question."""
+    if not text or not text.strip():
+        return "English"
+    
     result = ollama_call(
         f"Detect the language of this text and return ONLY the language name, "
         f"nothing else. For example: 'English', 'French', 'Spanish', 'Arabic'.\n\n"
         f"Text: {text}"
     )
-    print(f"🌐 Detected language: {result}")
-    return result or "English"
+    
+    # Clean result and fallback to English if empty or None
+    cleaned = result.strip() if result else ""
+    if not cleaned or cleaned.lower() == "none":
+        return "English"
+    
+    print(f"🌐 Detected language: {cleaned}")
+    return cleaned
 
 
 def generate_summary(chunks: list) -> str:
@@ -137,7 +146,7 @@ def calculate_confidence(scores: list) -> str:
         return "0%"
     similarities = [1 / (1 + score) for score in scores]
     avg = sum(similarities) / len(similarities)
-    percentage = round(avg * 100, 1)
+    percentage = round(avg * 100, 1)  # round to 1 decimal
     return f"{percentage}%"
 
 
@@ -158,7 +167,6 @@ Context:
 {context}
 """
 
-
 def build_qa_chain(vector_store: FAISS):
     """Build the RAG chain with DB-backed memory."""
     retriever = vector_store.as_retriever(search_kwargs={"k": 5})
@@ -174,11 +182,21 @@ def build_qa_chain(vector_store: FAISS):
         ("human", "{question}"),
     ])
 
+    def get_context(inputs):
+        question = inputs.get("question", "")
+        docs = retriever.invoke(question)
+        return "\n\n".join([doc.page_content for doc in docs])
+
+    def get_language(inputs):
+        lang = inputs.get("language", "English")
+        if not lang or lang.lower() == "none":
+            return "English"
+        return lang
+
     chain = (
         RunnablePassthrough.assign(
-            context=lambda x: "\n\n".join([
-                doc.page_content for doc in retriever.invoke(x["question"])
-            ]),
+            context=get_context,
+            language=get_language,
         )
         | prompt
         | llm
@@ -187,7 +205,7 @@ def build_qa_chain(vector_store: FAISS):
 
     chain_with_history = RunnableWithMessageHistory(
         chain,
-        get_session_history,  # ← now DB-backed, not in-memory dict
+        get_session_history,
         input_messages_key="question",
         history_messages_key="chat_history",
     )
