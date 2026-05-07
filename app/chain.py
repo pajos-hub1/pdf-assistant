@@ -6,15 +6,8 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.runnables import RunnablePassthrough
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
-from sqlalchemy.orm import Session as DBSession
 from app.database import SessionLocal, ChatHistory
 import requests
-from dotenv import load_dotenv
-import os
-load_dotenv()
-
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 
 # ─────────────────────────────────────────
@@ -22,17 +15,12 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 # ─────────────────────────────────────────
 
 class DBChatMessageHistory(BaseChatMessageHistory):
-    """
-    Replaces the in-memory store = {} with database-backed history.
-    Each session_id loads its own history from the DB.
-    """
     def __init__(self, session_id: str):
         self.session_id = session_id
         self._messages = []
         self._load_from_db()
 
     def _load_from_db(self):
-        """Load existing chat history from DB on initialization."""
         from langchain_core.messages import HumanMessage, AIMessage
         db = SessionLocal()
         try:
@@ -57,15 +45,10 @@ class DBChatMessageHistory(BaseChatMessageHistory):
         self._messages.append(message)
 
     def clear(self):
-        """Clear in-memory messages — DB records cleared separately via endpoint."""
         self._messages = []
 
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    """
-    Returns DB-backed chat history for a session.
-    Each user gets their own isolated history.
-    """
     return DBChatMessageHistory(session_id=session_id)
 
 
@@ -73,13 +56,17 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 # OLLAMA HELPER
 # ─────────────────────────────────────────
 
+OLLAMA_URL = "http://localhost:11434"
+OLLAMA_MODEL = "llama3.2"
+
+
 def ollama_call(prompt: str) -> str:
-    """Generic reusable Ollama call."""
+    """Generic reusable Ollama call — no streaming."""
     try:
         response = requests.post(
-            "http://localhost:11434/api/generate",
+            f"{OLLAMA_URL}/api/generate",
             json={
-                "model": "llama3.2",
+                "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False
             },
@@ -91,32 +78,86 @@ def ollama_call(prompt: str) -> str:
         return ""
 
 
+def ollama_stream(prompt: str, context: str, chat_history: list):
+    messages = []
+
+    for msg in chat_history:
+        if hasattr(msg, 'content'):
+            role = "user" if msg.__class__.__name__ == "HumanMessage" else "assistant"
+            messages.append({"role": role, "content": msg.content})
+
+    system = f"""Y
+                You are a helpful document assistant.
+                Use the context below to answer the question as thoroughly as possible.
+                If the answer is partially in the context, use what is available.
+                Only say "I don't have enough information in this document" if there is absolutely nothing relevant.
+
+                Context:
+                {context}
+            """
+
+    messages = [{"role": "system", "content": system}] + messages
+    messages.append({"role": "user", "content": prompt})
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_URL}/api/chat",
+            json={
+                "model": OLLAMA_MODEL,
+                "messages": messages,
+                "stream": True
+            },
+            stream=True,
+            timeout=120
+        )
+
+        for line in response.iter_lines():
+            if line:
+                import json as json_lib
+                data = json_lib.loads(line.decode('utf-8'))
+                token = data.get("message", {}).get("content", "")
+                done = data.get("done", False)
+                if token:
+                    yield token
+                if done:
+                    break
+
+    except Exception as e:
+        print(f"⚠️  Ollama stream failed: {e}")
+        yield f"Error: {str(e)}"
+
 # ─────────────────────────────────────────
 # PHASE 2 FEATURES
 # ─────────────────────────────────────────
 
+VALID_LANGUAGES = {
+    "english", "french", "spanish", "arabic", "portuguese",
+    "german", "italian", "chinese", "japanese", "korean",
+    "russian", "hindi", "dutch", "swedish", "norwegian",
+    "danish", "finnish", "polish", "turkish", "greek"
+}
+
 def detect_language(text: str) -> str:
-    """Detect the language of the user's question."""
     if not text or not text.strip():
         return "English"
-    
+
     result = ollama_call(
         f"Detect the language of this text and return ONLY the language name, "
         f"nothing else. For example: 'English', 'French', 'Spanish', 'Arabic'.\n\n"
         f"Text: {text}"
     )
-    
-    # Clean result and fallback to English if empty or None
+
     cleaned = result.strip() if result else ""
-    if not cleaned or cleaned.lower() == "none":
+
+    # Validate — if not a real language name, default to English
+    if not cleaned or cleaned.lower() not in VALID_LANGUAGES:
         return "English"
-    
-    print(f"🌐 Detected language: {cleaned}")
-    return cleaned
+
+    # Capitalize properly
+    return cleaned.capitalize()
 
 
 def generate_summary(chunks: list) -> str:
-    """Summarize the document using the first few chunks."""
     sample_text = "\n\n".join([c.page_content for c in chunks[:6]])
     summary = ollama_call(
         f"You are a document summarizer. Read the following text extracted from a document "
@@ -127,7 +168,6 @@ def generate_summary(chunks: list) -> str:
 
 
 def generate_suggestions(question: str, answer: str) -> list:
-    """Generate 3 follow-up question suggestions based on the Q&A."""
     result = ollama_call(
         f"Based on this question and answer, suggest exactly 3 short follow-up questions "
         f"the user might want to ask next. Return ONLY the 3 questions, one per line, "
@@ -141,12 +181,11 @@ def generate_suggestions(question: str, answer: str) -> list:
 
 
 def calculate_confidence(scores: list) -> str:
-    """Convert FAISS similarity scores to a confidence percentage."""
     if not scores:
         return "0%"
     similarities = [1 / (1 + score) for score in scores]
     avg = sum(similarities) / len(similarities)
-    percentage = round(avg * 100, 1)  # round to 1 decimal
+    percentage = round(avg * 100, 1)  # exactly 1 decimal
     return f"{percentage}%"
 
 
@@ -154,27 +193,22 @@ def calculate_confidence(scores: list) -> str:
 # RAG CHAIN
 # ─────────────────────────────────────────
 
-SYSTEM_PROMPT = """
-You are a helpful document assistant.
+SYSTEM_PROMPT = """You are a helpful document assistant.
 Use the context below to answer the question as thoroughly as possible.
 Always answer in {language}.
-If the answer is partially in the context, use what is available and indicate 
+If the answer is partially in the context, use what is available and indicate
 if more detail is not in the document.
-Only say "I don't have enough information in this document" if there is 
+Only say "I don't have enough information in this document" if there is
 absolutely nothing relevant in the context.
 
 Context:
-{context}
-"""
+{context}"""
+
 
 def build_qa_chain(vector_store: FAISS):
-    """Build the RAG chain with DB-backed memory."""
     retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
-    llm = ChatOllama(
-        model="llama3.2",
-        temperature=0
-    )
+    llm = ChatOllama(model=OLLAMA_MODEL, temperature=0)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),

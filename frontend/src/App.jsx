@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './context/AuthContext'
 import Register from './components/Auth/Register'
 import Header from './components/Layout/Header'
 import Sidebar from './components/Layout/Sidebar'
 import ChatWindow from './components/Chat/ChatWindow'
 import ChatInput from './components/Chat/ChatInput'
+import { useStream } from './hooks/useStream'
 import {
   uploadPDF,
   checkStatus,
@@ -17,10 +18,11 @@ import {
 
 export default function App() {
   const { isAuthenticated, updateSession } = useAuth()
+  const { streaming, streamQuestion } = useStream()
+  const isAskingRef = useRef(false) // ← prevents double calls
 
   const [messages, setMessages] = useState([])
   const [documents, setDocuments] = useState([])
-  const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [hasReadyDoc, setHasReadyDoc] = useState(false)
 
@@ -30,7 +32,6 @@ export default function App() {
       loadDocuments()
       loadHistory()
     } else {
-      // Clear state on logout
       setMessages([])
       setDocuments([])
       setHasReadyDoc(false)
@@ -43,14 +44,14 @@ export default function App() {
     setHasReadyDoc(ready)
   }, [documents])
 
-  // Poll ONLY when documents are still processing
+  // Poll ONLY when documents are processing
   useEffect(() => {
     const processing = documents.filter((d) => d.status === 'processing')
     if (processing.length === 0) return
 
     const interval = setInterval(() => {
-      loadDocuments() // only poll documents, not history
-    }, 15000) // every 15 seconds
+      loadDocuments()
+    }, 15000)
 
     return () => clearInterval(interval)
   }, [documents])
@@ -69,17 +70,15 @@ export default function App() {
       const data = await getHistory()
       const formatted = []
       for (const record of data.history || []) {
-        formatted.push({
-          role: 'user',
-          content: record.question
-        })
+        formatted.push({ role: 'user', content: record.question })
         formatted.push({
           role: 'assistant',
           content: record.answer,
           confidence: record.confidence,
           sources: record.sources,
           suggestions: record.suggestions,
-          language_detected: record.language
+          language_detected: record.language,
+          streaming: false
         })
       }
       setMessages(formatted)
@@ -92,13 +91,8 @@ export default function App() {
     setUploading(true)
     try {
       const data = await uploadPDF(file)
+      if (data.session_id) updateSession(data.session_id)
 
-      // Save session_id from first upload
-      if (data.session_id) {
-        updateSession(data.session_id)
-      }
-
-      // Add document immediately with processing status
       setDocuments((prev) => [
         ...prev,
         {
@@ -108,10 +102,7 @@ export default function App() {
           summary: ''
         }
       ])
-
-      // Poll this specific document until done
       pollDocumentStatus(data.doc_id)
-
     } catch (err) {
       console.error('Upload failed:', err)
     } finally {
@@ -125,51 +116,86 @@ export default function App() {
         const data = await checkStatus(docId)
         if (data.status === 'done' || data.status === 'failed') {
           clearInterval(interval)
-          loadDocuments() // refresh full list when done
+          loadDocuments()
         }
       } catch (err) {
         clearInterval(interval)
       }
-    }, 10000) // check every 10 seconds
+    }, 10000)
   }
 
-  const handleAsk = async (question) => {
-    if (!question.trim() || loading) return
+const handleAsk = async (question) => {
+  if (!question.trim() || streaming || isAskingRef.current) return
+  isAskingRef.current = true
 
-    // Add user message immediately
-    setMessages((prev) => [...prev, {
-      role: 'user',
-      content: question
-    }])
-    setLoading(true)
+  // Add user message only
+  setMessages((prev) => [...prev, { role: 'user', content: question }])
 
-    try {
-      const data = await askQuestion(question)
+  // Track if assistant message has been added yet
+  let assistantAdded = false
 
-      // Add assistant response
+  await streamQuestion(
+    question,
+
+    // onToken — add assistant message on FIRST token only
+    (token) => {
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+
+        // Only add assistant bubble on first token
+        if (!assistantAdded || last?.role !== 'assistant') {
+          assistantAdded = true
+          return [...updated, {
+            role: 'assistant',
+            content: token,
+            streaming: true
+          }]
+        }
+
+        // Append token to existing assistant bubble
+        updated[updated.length - 1] = {
+          ...last,
+          content: last.content + token
+        }
+        return updated
+      })
+    },
+
+    // onDone — finalize assistant message
+    (metadata) => {
+      setMessages((prev) => {
+        const updated = [...prev]
+        const last = updated[updated.length - 1]
+        if (last?.role === 'assistant') {
+          updated[updated.length - 1] = {
+            ...last,
+            streaming: false,
+            confidence: metadata.confidence,
+            sources: `Pages: ${metadata.sources}`,
+            suggestions: metadata.suggestions,
+            language_detected: metadata.language
+          }
+        }
+        return updated
+      })
+      isAskingRef.current = false
+    },
+
+    // onError
+    (error) => {
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
-          content: data.answer,
-          confidence: data.confidence,
-          sources: data.sources,
-          suggestions: data.suggestions,
-          language_detected: data.language_detected
+          content: `❌ ${error}`,
+          streaming: false
         }
       ])
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: '❌ Something went wrong. Please try again.',
-        }
-      ])
-    } finally {
-      setLoading(false)
+      isAskingRef.current = false
     }
-  }
+  )
+}
 
   const handleClearAll = async () => {
     try {
@@ -184,42 +210,33 @@ export default function App() {
   }
 
   const handleSuggestionClick = (suggestion) => {
-    handleAsk(suggestion)
+    if (!streaming && !isAskingRef.current) {
+      handleAsk(suggestion)
+    }
   }
 
-  // Show auth page if not logged in
-  if (!isAuthenticated) {
-    return <Register />
-  }
+  if (!isAuthenticated) return <Register />
 
   return (
     <div className="h-screen flex flex-col bg-white dark:bg-gray-950 overflow-hidden">
-
-      {/* Header */}
       <Header />
-
-      {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
-
-        {/* Sidebar */}
         <Sidebar
           documents={documents}
           onUpload={handleUpload}
           onClearAll={handleClearAll}
           uploading={uploading}
         />
-
-        {/* Chat area */}
         <main className="flex-1 flex flex-col overflow-hidden">
           <ChatWindow
             messages={messages}
-            loading={loading}
+            loading={streaming}
             onSuggestionClick={handleSuggestionClick}
           />
           <ChatInput
             onSend={handleAsk}
-            loading={loading}
-            disabled={!hasReadyDoc}
+            loading={streaming}
+            disabled={!hasReadyDoc || streaming}
           />
         </main>
       </div>

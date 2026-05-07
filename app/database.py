@@ -23,9 +23,9 @@ Base = declarative_base()
 pwd_context = CryptContext(
     schemes=["argon2"],
     deprecated="auto",
-    argon2__memory_cost=65536,  # 64MB memory — hard to brute force
-    argon2__time_cost=3,        # 3 iterations
-    argon2__parallelism=4       # 4 parallel threads
+    argon2__memory_cost=65536,
+    argon2__time_cost=3,
+    argon2__parallelism=4
 )
 
 def hash_password(password: str) -> str:
@@ -54,16 +54,26 @@ class APIKey(Base):
 
 
 class Session(Base):
+    """One session = one chat conversation."""
     __tablename__ = "sessions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=False)
+    name = Column(String, default="New Chat")        # ← chat name
     created_at = Column(DateTime, default=datetime.utcnow)
     last_active = Column(DateTime, default=datetime.utcnow)
 
     api_key = relationship("APIKey", back_populates="sessions")
-    chat_history = relationship("ChatHistory", back_populates="session")
-    documents = relationship("Document", back_populates="session")
+    chat_history = relationship(
+        "ChatHistory",
+        back_populates="session",
+        cascade="all, delete-orphan"
+    )
+    documents = relationship(
+        "Document",
+        back_populates="session",
+        cascade="all, delete-orphan"
+    )
 
 
 class ChatHistory(Base):
@@ -115,14 +125,11 @@ def init_db():
 
 
 def register_user(owner_name: str, email: str, password: str) -> dict:
-    """Register a new user — returns api_key or error."""
     db = SessionLocal()
     try:
-        # Check if email already exists
         existing = db.query(APIKey).filter(APIKey.email == email).first()
         if existing:
             return {"error": "Email already registered. Please login instead."}
-
         key = f"sk-{uuid.uuid4().hex[:32]}"
         user = APIKey(
             key=key,
@@ -140,7 +147,6 @@ def register_user(owner_name: str, email: str, password: str) -> dict:
 
 
 def login_user(email: str, password: str) -> dict:
-    """Login user — returns api_key or error."""
     db = SessionLocal()
     try:
         user = db.query(APIKey).filter(APIKey.email == email).first()
@@ -161,7 +167,7 @@ def login_user(email: str, password: str) -> dict:
 
 
 def create_api_key(owner_name: str, key: str = None) -> str:
-    """Legacy helper — kept for admin use."""
+    """Legacy admin helper."""
     db = SessionLocal()
     try:
         if not key:
@@ -180,22 +186,81 @@ def create_api_key(owner_name: str, key: str = None) -> str:
         db.close()
 
 
-def get_or_create_session(db, api_key_id: int, session_id: str = None):
+def get_or_create_session(
+    db,
+    api_key_id: int,
+    session_id: str = None
+) -> Session:
     if session_id:
         session = db.query(Session).filter(Session.id == session_id).first()
         if session:
             session.last_active = datetime.utcnow()
             db.commit()
             return session
-
-    session = Session(api_key_id=api_key_id)
+    # Create new session
+    session = Session(api_key_id=api_key_id, name="New Chat")
     db.add(session)
     db.commit()
     db.refresh(session)
     return session
 
 
-def save_chat(db, session_id, question, answer, language, confidence, sources, suggestions):
+def create_new_chat(db, api_key_id: int, name: str = "New Chat") -> Session:
+    """Explicitly create a new chat session."""
+    session = Session(api_key_id=api_key_id, name=name)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
+
+
+def rename_chat(db, session_id: str, name: str) -> Session:
+    """Rename a chat session."""
+    session = db.query(Session).filter(Session.id == session_id).first()
+    if session:
+        session.name = name
+        db.commit()
+        db.refresh(session)
+    return session
+
+
+def delete_chat(db, session_id: str) -> bool:
+    """Delete a chat and all its documents and history."""
+    session = db.query(Session).filter(Session.id == session_id).first()
+    if session:
+        db.delete(session)  # cascade deletes history + documents
+        db.commit()
+        return True
+    return False
+
+
+def get_all_chats(db, api_key_id: int) -> list:
+    """Get all chat sessions for a user ordered by last active."""
+    sessions = (
+        db.query(Session)
+        .filter(Session.api_key_id == api_key_id)
+        .order_by(Session.last_active.desc())
+        .all()
+    )
+    result = []
+    for s in sessions:
+        message_count = len(s.chat_history)
+        doc_count = len(s.documents)
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "message_count": message_count,
+            "doc_count": doc_count,
+            "created_at": s.created_at,
+            "last_active": s.last_active
+        })
+    return result
+
+
+def save_chat(
+    db, session_id, question, answer,
+    language, confidence, sources, suggestions
+):
     chat = ChatHistory(
         session_id=session_id,
         question=question,

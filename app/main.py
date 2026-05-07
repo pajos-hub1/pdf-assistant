@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from fastapi.responses import StreamingResponse
+from app.chain import ollama_stream, get_session_history
+import json
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.requests import Request
@@ -18,7 +21,11 @@ from app.database import (
     save_document,
     create_api_key,
     register_user,
-    login_user, 
+    login_user,
+    create_new_chat,
+    rename_chat,
+    delete_chat,
+    get_all_chats,
     ChatHistory,
     Document,
 )
@@ -183,6 +190,145 @@ async def login(request: LoginRequest):
     }
 
 # ─────────────────────────────────────────
+# CHAT MANAGEMENT ENDPOINTS
+# ─────────────────────────────────────────
+
+class NewChatRequest(BaseModel):
+    name: str = "New Chat"
+
+class RenameChatRequest(BaseModel):
+    name: str
+
+
+@app.get("/chats", tags=["Chats"])
+async def get_chats(
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """Get all chat sessions for the current user."""
+    chats = get_all_chats(db, api_key_id=auth.id)
+    return {"chats": chats}
+
+
+@app.post("/chats/new", tags=["Chats"])
+async def new_chat(
+    body: NewChatRequest,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """Create a new chat session."""
+    session = create_new_chat(
+        db,
+        api_key_id=auth.id,
+        name=body.name
+    )
+    return {
+        "message": "✅ New chat created",
+        "session_id": session.id,
+        "name": session.name,
+        "created_at": session.created_at
+    }
+
+
+@app.patch("/chats/{session_id}/rename", tags=["Chats"])
+async def rename_chat_endpoint(
+    session_id: str,
+    body: RenameChatRequest,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """Rename a chat session."""
+    session = rename_chat(db, session_id=session_id, name=body.name)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    return {
+        "message": "✅ Chat renamed",
+        "session_id": session.id,
+        "name": session.name
+    }
+
+
+@app.delete("/chats/{session_id}", tags=["Chats"])
+async def delete_chat_endpoint(
+    session_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """Delete a chat and all its documents and history."""
+    # Clear in-memory data
+    clear_session_data(session_id)
+
+    # Remove FAISS index from disk
+    faiss_path = f"data/{session_id}/faiss_index"
+    if os.path.exists(faiss_path):
+        shutil.rmtree(faiss_path)
+
+    # Delete from DB
+    success = delete_chat(db, session_id=session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+
+    return {"message": "✅ Chat deleted successfully."}
+
+
+@app.get("/chats/{session_id}/history", tags=["Chats"])
+async def get_chat_history(
+    session_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """Get chat history for a specific session."""
+    records = (
+        db.query(ChatHistory)
+        .filter(ChatHistory.session_id == session_id)
+        .order_by(ChatHistory.created_at.asc())
+        .all()
+    )
+    return {
+        "session_id": session_id,
+        "history": [
+            {
+                "question": r.question,
+                "answer": r.answer,
+                "language": r.language,
+                "confidence": r.confidence,
+                "sources": r.sources,
+                "suggestions": r.suggestions.split("|") if r.suggestions else [],
+                "created_at": r.created_at
+            }
+            for r in records
+        ]
+    }
+
+
+@app.get("/chats/{session_id}/documents", tags=["Chats"])
+async def get_chat_documents(
+    session_id: str,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(validate_api_key)
+):
+    """Get documents for a specific chat session."""
+    docs = (
+        db.query(Document)
+        .filter(Document.session_id == session_id)
+        .all()
+    )
+    return {
+        "session_id": session_id,
+        "documents": [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "status": d.status,
+                "summary": d.summary,
+                "uploaded_at": d.uploaded_at
+            }
+            for d in docs
+        ]
+    }
+
+
+# ─────────────────────────────────────────
 # PROTECTED ENDPOINTS — auth required
 # ─────────────────────────────────────────
 
@@ -244,7 +390,88 @@ async def upload_pdf(
         "tip": "Save your session_id and pass it as X-Session-Id header in all future requests"
     }
 
+@app.post("/ask/stream", tags=["QA"])
+@limiter.limit("10/minute")
+async def ask_stream(
+    request: Request,
+    body: QuestionRequest,
+    db: Session = Depends(get_db),
+    auth: dict = Depends(get_current_session)
+):
+    session = auth["session"]
+    owner = auth["owner"]
+    start_time = time.time()
 
+    session_data = get_session_chain(session.id)
+    if not session_data:
+        raise HTTPException(
+            status_code=400,
+            detail="❌ No document ready yet."
+        )
+
+    retriever = session_data["retriever"]
+    vector_store = get_session_store(session.id)
+
+    # Detect language
+    language = detect_language(body.question)
+    if not language or language.lower() == "none":
+        language = "English"
+
+    # Get docs + confidence
+    docs_with_scores = vector_store.similarity_search_with_score(
+        body.question, k=5
+    )
+    docs = [doc for doc, score in docs_with_scores]
+    scores = [score for doc, score in docs_with_scores]
+    confidence = calculate_confidence(scores)
+    sources = sorted(set([
+        doc.metadata.get("page", "unknown") for doc in docs
+    ]))
+    context = "\n\n".join([doc.page_content for doc in docs])
+
+    # Get chat history
+    history = get_session_history(session.id).messages
+
+    # Use a mutable container so nested function can modify it
+    state = {"full_answer": []}
+
+    def generate():
+        for token in ollama_stream(body.question, context, history):
+            state["full_answer"].append(token)
+            # Send token immediately — no buffering
+            yield f"data: {json.dumps({'token': token})}\n\n"
+
+        complete_answer = "".join(state["full_answer"])
+        print(f"✅ Stream complete — answer length: {len(complete_answer)}")
+
+        suggestions = generate_suggestions(body.question, complete_answer)
+
+        save_chat(
+            db=db,
+            session_id=session.id,
+            question=body.question,
+            answer=complete_answer,
+            language=language,
+            confidence=confidence,
+            sources=sources,
+            suggestions=suggestions
+        )
+
+        duration_ms = (time.time() - start_time) * 1000
+        log_query(
+            session_id=session.id,
+            owner=owner,
+            question=body.question,
+            answer=complete_answer,
+            language=language,
+            confidence=confidence,
+            sources=sources,
+            duration_ms=duration_ms
+        )
+
+        yield f"data: {json.dumps({'done': True, 'confidence': confidence, 'sources': sources, 'suggestions': suggestions, 'language': language})}\n\n"
+
+        
 @app.get("/status/{doc_id}", tags=["Documents"])
 async def check_status(
     doc_id: int,
@@ -478,26 +705,26 @@ async def get_history(
 @app.get("/auth/me", tags=["Auth"])
 async def get_me(
     db: Session = Depends(get_db),
-    auth: dict = Depends(validate_api_key)
+    auth = Depends(validate_api_key)
 ):
-    """
-    Returns the current user's info and their last active session.
-    Called after login to restore session.
-    """
+    """Returns current user info and all their chats."""
     from app.database import Session as DBSession
-    
-    # Get the most recent session for this user
+
+    chats = get_all_chats(db, api_key_id=auth.id)
+
+    # Get last active session
     last_session = (
         db.query(DBSession)
         .filter(DBSession.api_key_id == auth.id)
         .order_by(DBSession.last_active.desc())
         .first()
     )
-    
+
     return {
         "owner": auth.owner_name,
         "email": auth.email,
-        "session_id": last_session.id if last_session else None
+        "session_id": last_session.id if last_session else None,
+        "chats": chats
     }
 
 @app.delete("/history", tags=["QA"])
