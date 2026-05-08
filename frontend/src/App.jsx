@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './context/AuthContext'
 import { useChat } from './context/ChatContext'
+import { useToast } from './context/ToastContext'
 import Register from './components/Auth/Register'
 import Header from './components/Layout/Header'
 import Sidebar from './components/Sidebar/Sidebar'
 import ChatWindow from './components/Chat/ChatWindow'
 import ChatInput from './components/Chat/ChatInput'
+import ChatHeader from './components/Chat/ChatHeader'
 import { useStream } from './hooks/useStream'
 import {
   uploadPDF,
@@ -23,9 +25,9 @@ export default function App() {
     activeChatId,
     setActiveChatId,
     loadChats,
-    createNewChat,
     updateChatStats
   } = useChat()
+  const { toast } = useToast()
   const { streaming, streamQuestion } = useStream()
 
   const isAskingRef = useRef(false)
@@ -38,20 +40,19 @@ export default function App() {
   const [documents, setDocuments] = useState([])
   const [uploading, setUploading] = useState(false)
   const [hasReadyDoc, setHasReadyDoc] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(false)
+  const [loadingDocs, setLoadingDocs] = useState(false)
 
-  // Keep messagesRef in sync
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
 
-  // Auto reset when streaming stops
   useEffect(() => {
     if (!streaming) {
       isAskingRef.current = false
     }
   }, [streaming])
 
-  // On login — load all chats
   useEffect(() => {
     if (isAuthenticated) {
       initializeChats()
@@ -64,7 +65,6 @@ export default function App() {
     }
   }, [isAuthenticated])
 
-  // When active chat changes — load its data
   useEffect(() => {
     if (activeChatId && activeChatId !== loadingChatRef.current) {
       loadingChatRef.current = activeChatId
@@ -72,19 +72,15 @@ export default function App() {
     }
   }, [activeChatId])
 
-  // Check if any doc is ready
   useEffect(() => {
     const ready = documents.some((d) => d.status === 'done')
     setHasReadyDoc(ready)
   }, [documents])
 
-  // Poll only when processing
   useEffect(() => {
     const processing = documents.filter((d) => d.status === 'processing')
     if (processing.length === 0) return
-
     const currentChatId = activeChatId
-
     const interval = setInterval(async () => {
       if (activeChatId !== currentChatId) {
         clearInterval(interval)
@@ -92,34 +88,22 @@ export default function App() {
       }
       loadDocuments()
     }, 15000)
-
     return () => clearInterval(interval)
   }, [documents, activeChatId])
-
-  // ─────────────────────────────────────────
-  // INIT
-  // ─────────────────────────────────────────
 
   const initializeChats = async () => {
     const allChats = await loadChats()
     if (allChats.length === 0) return
-
     const savedSessionId = localStorage.getItem('session_id')
     const savedExists = allChats.some((c) => c.id === savedSessionId)
     const chatToLoad = savedExists ? savedSessionId : allChats[0].id
-
-    if (!savedExists) {
-      localStorage.setItem('session_id', chatToLoad)
-    }
-
+    if (!savedExists) localStorage.setItem('session_id', chatToLoad)
     setActiveChatId(chatToLoad)
   }
 
-  // ─────────────────────────────────────────
-  // LOADERS
-  // ─────────────────────────────────────────
-
   const loadChatData = async (chatId) => {
+    setInitialLoading(true)
+    setLoadingDocs(true)
     setMessages([])
     messagesRef.current = []
     setDocuments([])
@@ -148,6 +132,10 @@ export default function App() {
       setDocuments(docData.documents || [])
     } catch (err) {
       console.error('Failed to load chat data:', err)
+      toast.error('Failed to load chat data.')
+    } finally {
+      setInitialLoading(false)
+      setLoadingDocs(false)
     }
   }
 
@@ -161,10 +149,6 @@ export default function App() {
     }
   }
 
-  // ─────────────────────────────────────────
-  // CHAT SWITCH
-  // ─────────────────────────────────────────
-
   const handleChatSwitch = (chatId) => {
     setMessages([])
     messagesRef.current = []
@@ -177,34 +161,30 @@ export default function App() {
     loadChatData(chatId)
   }
 
-  // ─────────────────────────────────────────
-  // UPLOAD
-  // ─────────────────────────────────────────
-
   const handleUpload = async (file) => {
     if (!activeChatId) {
-      alert('Please select or create a chat first.')
+      toast.warning('Please select or create a chat first.')
       return
     }
     setUploading(true)
     try {
       const data = await uploadPDF(file)
-      if (data.session_id) {
-        updateSession(data.session_id)
-      }
+      if (data.session_id) updateSession(data.session_id)
+      toast.info(`📄 ${file.name} uploaded — processing...`)
       setDocuments((prev) => [
         ...prev,
         { id: data.doc_id, filename: file.name, status: 'processing', summary: '' }
       ])
-      pollDocumentStatus(data.doc_id)
+      pollDocumentStatus(data.doc_id, file.name)
     } catch (err) {
+      toast.error('Upload failed. Please try again.')
       console.error('Upload failed:', err)
     } finally {
       setUploading(false)
     }
   }
 
-  const pollDocumentStatus = (docId) => {
+  const pollDocumentStatus = (docId, filename) => {
     const currentChatId = activeChatId
     const interval = setInterval(async () => {
       try {
@@ -215,14 +195,14 @@ export default function App() {
           }
         })
         const data = await res.json()
-        if (data.status === 'done' || data.status === 'failed') {
+        if (data.status === 'done') {
           clearInterval(interval)
-          if (activeChatId === currentChatId) {
-            loadDocuments()
-            updateChatStats(currentChatId, {
-              doc_count: documents.length + 1
-            })
-          }
+          toast.success(`✅ ${filename} is ready!`)
+          if (activeChatId === currentChatId) loadDocuments()
+        } else if (data.status === 'failed') {
+          clearInterval(interval)
+          toast.error(`❌ Failed to process ${filename}`)
+          if (activeChatId === currentChatId) loadDocuments()
         }
       } catch (err) {
         clearInterval(interval)
@@ -230,9 +210,33 @@ export default function App() {
     }, 10000)
   }
 
-  // ─────────────────────────────────────────
-  // ASK
-  // ─────────────────────────────────────────
+  const handleClearChat = async () => {
+    try {
+      await clearHistory()
+      setMessages([])
+      messagesRef.current = []
+      toast.success('Chat history cleared.')
+      if (activeChatId) {
+        updateChatStats(activeChatId, { message_count: 0 })
+      }
+    } catch (err) {
+      toast.error('Failed to clear chat.')
+    }
+  }
+
+  const handleClearAll = async () => {
+    try {
+      await clearDocuments()
+      await clearHistory()
+      setMessages([])
+      messagesRef.current = []
+      setDocuments([])
+      setHasReadyDoc(false)
+      toast.success('All documents and history cleared.')
+    } catch (err) {
+      toast.error('Failed to clear.')
+    }
+  }
 
   const handleAsk = async (question) => {
     if (!question.trim() || streaming) return
@@ -249,7 +253,6 @@ export default function App() {
     await streamQuestion(
       question,
 
-      // onToken
       (token) => {
         if (assistantIndexRef.current === -1) {
           const base = [...messagesRef.current]
@@ -277,7 +280,6 @@ export default function App() {
         }
       },
 
-      // onDone
       (metadata) => {
         const idx = assistantIndexRef.current
         finalAssistantIndexRef.current = idx
@@ -306,7 +308,6 @@ export default function App() {
         isAskingRef.current = false
       },
 
-      // onError
       (error) => {
         const idx = assistantIndexRef.current
         const base = [...messagesRef.current]
@@ -325,12 +326,11 @@ export default function App() {
         assistantIndexRef.current = -1
         finalAssistantIndexRef.current = -1
         isAskingRef.current = false
+        toast.error('Failed to get answer. Please try again.')
       },
 
-      // onSuggestions — find last assistant message
       (suggestions) => {
         const base = [...messagesRef.current]
-
         let targetIdx = -1
         for (let i = base.length - 1; i >= 0; i--) {
           if (base[i].role === 'assistant' && !base[i].streaming) {
@@ -338,7 +338,6 @@ export default function App() {
             break
           }
         }
-
         if (targetIdx >= 0 && suggestions && suggestions.length > 0) {
           base[targetIdx] = { ...base[targetIdx], suggestions }
           messagesRef.current = base
@@ -348,31 +347,12 @@ export default function App() {
     )
   }
 
-  // ─────────────────────────────────────────
-  // CLEAR
-  // ─────────────────────────────────────────
-
-  const handleClearAll = async () => {
-    try {
-      await clearDocuments()
-      await clearHistory()
-      setMessages([])
-      messagesRef.current = []
-      setDocuments([])
-      setHasReadyDoc(false)
-    } catch (err) {
-      console.error('Clear failed:', err)
-    }
-  }
-
   const handleSuggestionClick = (suggestion) => {
     if (streaming || isAskingRef.current) return
     handleAsk(suggestion)
   }
 
-  // ─────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────
+  const activeChat = chats.find((c) => c.id === activeChatId)
 
   if (!isAuthenticated) return <Register />
 
@@ -386,11 +366,12 @@ export default function App() {
           onClearAll={handleClearAll}
           uploading={uploading}
           onChatSwitch={handleChatSwitch}
+          loadingDocs={loadingDocs}
         />
         <main className="flex-1 flex flex-col overflow-hidden">
           {!activeChatId ? (
-            <div className="flex-1 flex flex-col items-center justify-center
-                            text-center p-8">
+            <div className="flex-1 flex flex-col items-center
+                            justify-center text-center p-8">
               <div className="w-16 h-16 rounded-2xl bg-gray-100 dark:bg-gray-900
                               flex items-center justify-center mb-4">
                 <span className="text-3xl">💬</span>
@@ -406,10 +387,16 @@ export default function App() {
             </div>
           ) : (
             <>
+              <ChatHeader
+                chatName={activeChat?.name}
+                messageCount={messages.filter((m) => m.role === 'user').length}
+                onClearChat={handleClearChat}
+              />
               <ChatWindow
                 messages={messages}
                 loading={streaming}
                 onSuggestionClick={handleSuggestionClick}
+                initialLoading={initialLoading}
               />
               <ChatInput
                 onSend={handleAsk}

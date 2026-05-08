@@ -1,13 +1,16 @@
 import { useState, useRef } from 'react'
-import { Upload, Trash2, FileText, Loader2, CheckCircle, XCircle, ChevronDown, ChevronUp } from 'lucide-react'
+import { Upload, Trash2, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import ChatList from './ChatList'
+import DocumentPreview from '../Documents/DocumentPreview'
+import { SkeletonDocument } from '../UI/Skeleton'
 
 export default function Sidebar({
   documents,
   onUpload,
   onClearAll,
   uploading,
-  onChatSwitch
+  onChatSwitch,
+  loadingDocs
 }) {
   const fileRef = useRef(null)
   const [showDocs, setShowDocs] = useState(true)
@@ -20,17 +23,11 @@ export default function Sidebar({
     e.target.value = ''
   }
 
-  const getStatusIcon = (status) => {
-    if (status === 'done') return <CheckCircle size={12} className="text-green-500" />
-    if (status === 'failed') return <XCircle size={12} className="text-red-500" />
-    return <Loader2 size={12} className="text-blue-500 animate-spin" />
-  }
-
   return (
     <aside className="w-64 border-r border-gray-200 dark:border-gray-800
                       bg-white dark:bg-gray-950 flex flex-col shrink-0">
 
-      {/* Chat list — takes most space */}
+      {/* Chat list */}
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
         <div className="px-3 pt-3 pb-1">
           <p className="text-xs font-semibold text-gray-400 dark:text-gray-500
@@ -43,7 +40,7 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Documents panel — collapsible */}
+      {/* Documents panel */}
       <div className="border-t border-gray-200 dark:border-gray-800 shrink-0">
 
         {/* Documents header */}
@@ -64,34 +61,23 @@ export default function Sidebar({
         </button>
 
         {showDocs && (
-          <div className="px-3 pb-2 space-y-1 max-h-48 overflow-y-auto">
-            {documents.length === 0 && (
+          <div className="px-3 pb-2 space-y-1.5 max-h-52 overflow-y-auto">
+            {loadingDocs ? (
+              // Skeleton loading state
+              <>
+                <SkeletonDocument />
+                <SkeletonDocument />
+              </>
+            ) : documents.length === 0 ? (
               <p className="text-xs text-gray-400 dark:text-gray-600
                             text-center py-3">
                 No documents in this chat.
               </p>
+            ) : (
+              documents.map((doc) => (
+                <DocumentPreview key={doc.id} document={doc} />
+              ))
             )}
-
-            {documents.map((doc) => (
-              <div
-                key={doc.id}
-                className="flex items-center gap-2 p-2 rounded-lg
-                           bg-gray-50 dark:bg-gray-900"
-              >
-                <FileText size={12} className="text-gray-400 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-700 dark:text-gray-300 truncate">
-                    {doc.filename}
-                  </p>
-                  <div className="flex items-center gap-1 mt-0.5">
-                    {getStatusIcon(doc.status)}
-                    <span className="text-xs text-gray-400 dark:text-gray-500">
-                      {doc.status === 'done' ? 'Ready' : doc.status === 'failed' ? 'Failed' : 'Processing...'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
           </div>
         )}
 
@@ -113,7 +99,7 @@ export default function Sidebar({
               ? <Loader2 size={12} className="animate-spin" />
               : <Upload size={12} />
             }
-            {uploading ? 'Uploading...' : 'Upload'}
+            {uploading ? 'Uploading...' : 'Upload PDF'}
           </button>
 
           {documents.length > 0 && (
@@ -121,8 +107,7 @@ export default function Sidebar({
               onClick={onClearAll}
               className="p-2 rounded-xl text-red-400
                          hover:bg-red-50 dark:hover:bg-red-950
-                         hover:text-red-500
-                         transition-all duration-200"
+                         hover:text-red-500 transition-all duration-200"
               title="Clear all documents"
             >
               <Trash2 size={12} />
