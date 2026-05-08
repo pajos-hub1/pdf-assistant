@@ -391,6 +391,7 @@ export default function App() {
                 chatName={activeChat?.name}
                 messageCount={messages.filter((m) => m.role === 'user').length}
                 onClearChat={handleClearChat}
+                sessionId={activeChatId}
               />
               <ChatWindow
                 messages={messages}

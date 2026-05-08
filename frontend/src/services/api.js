@@ -117,3 +117,17 @@ export const healthCheck = async () => {
   const response = await api.get('/health')
   return response.data
 }
+
+export const exportChat = async (sessionId, format = 'txt') => {
+  const apiKey = localStorage.getItem('api_key')
+  const response = await fetch(
+    `/api/chats/${sessionId}/export?format=${format}`,
+    {
+      headers: {
+        'X-API-Key': apiKey || ''
+      }
+    }
+  )
+  if (!response.ok) throw new Error('Export failed')
+  return response
+}
