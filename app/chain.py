@@ -8,6 +8,17 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from app.database import SessionLocal, ChatHistory
 import requests
+import json as json_lib
+
+OLLAMA_URL = "http://localhost:11434"
+OLLAMA_MODEL = "llama3.2"
+
+VALID_LANGUAGES = {
+    "english", "french", "spanish", "arabic", "portuguese",
+    "german", "italian", "chinese", "japanese", "korean",
+    "russian", "hindi", "dutch", "swedish", "norwegian",
+    "danish", "finnish", "polish", "turkish", "greek"
+}
 
 
 # ─────────────────────────────────────────
@@ -53,12 +64,9 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
 
 # ─────────────────────────────────────────
-# OLLAMA HELPER
+# OLLAMA HELPERS — defined first so all
+# functions below can use them
 # ─────────────────────────────────────────
-
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "llama3.2"
-
 
 def ollama_call(prompt: str) -> str:
     """Generic reusable Ollama call — no streaming."""
@@ -79,6 +87,7 @@ def ollama_call(prompt: str) -> str:
 
 
 def ollama_stream(prompt: str, context: str, chat_history: list):
+    """Stream response tokens from Ollama one by one."""
     messages = []
 
     for msg in chat_history:
@@ -86,15 +95,13 @@ def ollama_stream(prompt: str, context: str, chat_history: list):
             role = "user" if msg.__class__.__name__ == "HumanMessage" else "assistant"
             messages.append({"role": role, "content": msg.content})
 
-    system = f"""Y
-                You are a helpful document assistant.
-                Use the context below to answer the question as thoroughly as possible.
-                If the answer is partially in the context, use what is available.
-                Only say "I don't have enough information in this document" if there is absolutely nothing relevant.
+    system = f"""You are a helpful document assistant.
+Use the context below to answer the question as thoroughly as possible.
+If the answer is partially in the context, use what is available.
+Only say "I don't have enough information in this document" if there is absolutely nothing relevant.
 
-                Context:
-                {context}
-            """
+Context:
+{context}"""
 
     messages = [{"role": "system", "content": system}] + messages
     messages.append({"role": "user", "content": prompt})
@@ -112,48 +119,54 @@ def ollama_stream(prompt: str, context: str, chat_history: list):
         )
 
         for line in response.iter_lines():
-            if line:
-                import json as json_lib
-                data = json_lib.loads(line.decode('utf-8'))
+            if not line:
+                continue
+            try:
+                if isinstance(line, bytes):
+                    raw = line.decode('utf-8', errors='replace')
+                else:
+                    raw = line
+
+                data = json_lib.loads(raw)
                 token = data.get("message", {}).get("content", "")
                 done = data.get("done", False)
+
                 if token:
                     yield token
                 if done:
                     break
 
+            except json_lib.JSONDecodeError:
+                continue
+            except Exception:
+                continue
+
     except Exception as e:
         print(f"⚠️  Ollama stream failed: {e}")
         yield f"Error: {str(e)}"
+
 
 # ─────────────────────────────────────────
 # PHASE 2 FEATURES
 # ─────────────────────────────────────────
 
-VALID_LANGUAGES = {
-    "english", "french", "spanish", "arabic", "portuguese",
-    "german", "italian", "chinese", "japanese", "korean",
-    "russian", "hindi", "dutch", "swedish", "norwegian",
-    "danish", "finnish", "polish", "turkish", "greek"
-}
-
 def detect_language(text: str) -> str:
+    """Fast language detection — skips Ollama for English text."""
     if not text or not text.strip():
         return "English"
 
-    result = ollama_call(
-        f"Detect the language of this text and return ONLY the language name, "
-        f"nothing else. For example: 'English', 'French', 'Spanish', 'Arabic'.\n\n"
-        f"Text: {text}"
-    )
-
-    cleaned = result.strip() if result else ""
-
-    # Validate — if not a real language name, default to English
-    if not cleaned or cleaned.lower() not in VALID_LANGUAGES:
+    # If more than 90% ASCII — it's English, no need to call Ollama
+    ascii_ratio = sum(c.isascii() for c in text) / len(text)
+    if ascii_ratio > 0.90:
         return "English"
 
-    # Capitalize properly
+    # Only call Ollama for non-Latin scripts
+    result = ollama_call(
+        f"Detect the language of this text. Reply with ONLY the language name:\n{text}"
+    )
+    cleaned = result.strip() if result else ""
+    if not cleaned or cleaned.lower() not in VALID_LANGUAGES:
+        return "English"
     return cleaned.capitalize()
 
 
@@ -185,7 +198,7 @@ def calculate_confidence(scores: list) -> str:
         return "0%"
     similarities = [1 / (1 + score) for score in scores]
     avg = sum(similarities) / len(similarities)
-    percentage = round(avg * 100, 1)  # exactly 1 decimal
+    percentage = round(avg * 100, 1)
     return f"{percentage}%"
 
 

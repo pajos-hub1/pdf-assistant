@@ -7,7 +7,8 @@ export function useStream() {
     question,
     onToken,
     onDone,
-    onError
+    onError,
+    onSuggestions
   ) => {
     setStreaming(true)
 
@@ -26,64 +27,90 @@ export function useStream() {
       })
 
       if (!response.ok) {
-        const err = await response.json()
-        throw new Error(err.detail || 'Stream request failed')
+        let errorMsg = 'Stream request failed'
+        try {
+          const err = await response.json()
+          errorMsg = err.detail || errorMsg
+        } catch {
+          errorMsg = `HTTP ${response.status}`
+        }
+        throw new Error(errorMsg)
       }
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
 
+      const processLine = (line) => {
+        const trimmed = line.trim()
+        if (!trimmed || !trimmed.startsWith('data: ')) return
+
+        const jsonStr = trimmed.slice(6).trim()
+        if (!jsonStr) return
+
+        try {
+          const data = JSON.parse(jsonStr)
+
+          // Handle token
+          if (data.token !== undefined && data.token !== null) {
+            onToken(data.token)
+          }
+
+          // Handle done
+          if (data.done === true) {
+            onDone({
+              confidence: data.confidence || '0%',
+              sources: data.sources || [],
+              suggestions: data.suggestions || [],
+              language: data.language || 'English'
+            })
+          }
+
+          // Handle late suggestions event
+          if (data.suggestions && !data.done && onSuggestions) {
+            onSuggestions(data.suggestions)
+          }
+
+          // Handle error from backend
+          if (data.error) {
+            onError(data.error)
+          }
+
+        } catch (parseErr) {
+          // Skip malformed lines silently
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read()
-
         if (done) break
 
-        // Decode chunk and add to buffer
         buffer += decoder.decode(value, { stream: true })
 
-        // Process all complete lines in buffer
-        const lines = buffer.split('\n')
+        // Split on double newlines — SSE event separator
+        const events = buffer.split('\n\n')
 
-        // Keep last incomplete line in buffer
-        buffer = lines.pop() || ''
+        // Keep last potentially incomplete event in buffer
+        buffer = events.pop() || ''
 
-        for (const line of lines) {
-          const trimmed = line.trim()
-
-          // Skip empty lines
-          if (!trimmed) continue
-
-          // Must start with "data: "
-          if (!trimmed.startsWith('data: ')) continue
-
-          const jsonStr = trimmed.slice(6) // remove "data: "
-
-          try {
-            const data = JSON.parse(jsonStr)
-
-            if (data.token !== undefined && data.token !== null) {
-              onToken(data.token)
-            }
-
-            if (data.done === true) {
-              onDone({
-                confidence: data.confidence || '0%',
-                sources: data.sources || [],
-                suggestions: data.suggestions || [],
-                language: data.language || 'English'
-              })
-            }
-          } catch (parseErr) {
-            // Skip malformed JSON lines
-            console.warn('Failed to parse SSE line:', jsonStr)
+        for (const event of events) {
+          const lines = event.split('\n')
+          for (const line of lines) {
+            processLine(line)
           }
         }
       }
 
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        const lines = buffer.split('\n')
+        for (const line of lines) {
+          processLine(line)
+        }
+      }
+
     } catch (err) {
-      console.error('Stream error:', err)
-      onError(err.message || 'Something went wrong')
+      onError(err.message || 'Something went wrong. Please try again.')
     } finally {
       setStreaming(false)
     }

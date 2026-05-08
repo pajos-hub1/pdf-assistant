@@ -409,7 +409,6 @@ async def ask_stream(
             detail="❌ No document ready yet."
         )
 
-    retriever = session_data["retriever"]
     vector_store = get_session_store(session.id)
 
     # Detect language
@@ -429,49 +428,97 @@ async def ask_stream(
     ]))
     context = "\n\n".join([doc.page_content for doc in docs])
 
-    # Get chat history
-    history = get_session_history(session.id).messages
+    # Load history directly from DB — no LangChain history object
+    from app.database import ChatHistory as ChatHistoryModel
+    from langchain_core.messages import HumanMessage, AIMessage
 
-    # Use a mutable container so nested function can modify it
-    state = {"full_answer": []}
+    records = (
+        db.query(ChatHistoryModel)
+        .filter(ChatHistoryModel.session_id == session.id)
+        .order_by(ChatHistoryModel.created_at.asc())
+        .all()
+    )
+    history = []
+    for record in records:
+        history.append(HumanMessage(content=record.question))
+        history.append(AIMessage(content=record.answer))
 
+    print(f"📚 History loaded: {len(records)} messages")
+
+    # Mutable state
+    state = {"full_answer": [], "suggestions": []}
     def generate():
-        for token in ollama_stream(body.question, context, history):
-            state["full_answer"].append(token)
-            # Send token immediately — no buffering
-            yield f"data: {json.dumps({'token': token})}\n\n"
+        try:
+            for token in ollama_stream(body.question, context, history):
+                state["full_answer"].append(token)
+                yield f"data: {json.dumps({'token': token})}\n\n"
 
-        complete_answer = "".join(state["full_answer"])
-        print(f"✅ Stream complete — answer length: {len(complete_answer)}")
+            complete_answer = "".join(state["full_answer"])
+            print(f"✅ Stream complete — length: {len(complete_answer)}")
 
-        suggestions = generate_suggestions(body.question, complete_answer)
+            # Save to DB immediately
+            save_chat(
+                db=db,
+                session_id=session.id,
+                question=body.question,
+                answer=complete_answer,
+                language=language,
+                confidence=confidence,
+                sources=sources,
+                suggestions=[]
+            )
 
-        save_chat(
-            db=db,
-            session_id=session.id,
-            question=body.question,
-            answer=complete_answer,
-            language=language,
-            confidence=confidence,
-            sources=sources,
-            suggestions=suggestions
-        )
+            duration_ms = (time.time() - start_time) * 1000
+            log_query(
+                session_id=session.id,
+                owner=owner,
+                question=body.question,
+                answer=complete_answer,
+                language=language,
+                confidence=confidence,
+                sources=sources,
+                duration_ms=duration_ms
+            )
 
-        duration_ms = (time.time() - start_time) * 1000
-        log_query(
-            session_id=session.id,
-            owner=owner,
-            question=body.question,
-            answer=complete_answer,
-            language=language,
-            confidence=confidence,
-            sources=sources,
-            duration_ms=duration_ms
-        )
+            # Send done event IMMEDIATELY — don't wait for suggestions
+            yield f"data: {json.dumps({'done': True, 'confidence': confidence, 'sources': sources, 'suggestions': [], 'language': language})}\n\n"
 
-        yield f"data: {json.dumps({'done': True, 'confidence': confidence, 'sources': sources, 'suggestions': suggestions, 'language': language})}\n\n"
+            # Generate suggestions in background thread
+            import threading
 
-        
+            def send_suggestions():
+                try:
+                    suggestions = generate_suggestions(body.question, complete_answer)
+                    if suggestions:
+                        state["suggestions"] = suggestions
+                except Exception:
+                    pass
+
+            thread = threading.Thread(target=send_suggestions)
+            thread.start()
+            thread.join(timeout=15)  # wait max 15 seconds
+
+            # Send suggestions if generated
+            if state.get("suggestions"):
+                yield f"data: {json.dumps({'suggestions': state['suggestions']})}\n\n"
+
+        except Exception as e:
+            print(f"❌ Stream error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Transfer-Encoding": "chunked"
+        }
+    )
+    
 @app.get("/status/{doc_id}", tags=["Documents"])
 async def check_status(
     doc_id: int,
