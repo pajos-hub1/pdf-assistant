@@ -1,17 +1,16 @@
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { Eye, EyeOff, Check, X } from 'lucide-react'
+import { registerUser, loginUser, getMe } from '../../services/api'
 import axios from 'axios'
 
-const checkStrength = (password) => {
-  return {
-    length: password.length >= 8,
-    uppercase: /[A-Z]/.test(password),
-    lowercase: /[a-z]/.test(password),
-    number: /[0-9]/.test(password),
-    special: /[^A-Za-z0-9]/.test(password),
-  }
-}
+const checkStrength = (password) => ({
+  length: password.length >= 8,
+  uppercase: /[A-Z]/.test(password),
+  lowercase: /[a-z]/.test(password),
+  number: /[0-9]/.test(password),
+  special: /[^A-Za-z0-9]/.test(password),
+})
 
 const StrengthItem = ({ met, label }) => (
   <div className="flex items-center gap-1.5">
@@ -61,34 +60,51 @@ export default function Auth() {
     setLoading(true)
     try {
       if (mode === 'register') {
-        const { data } = await axios.post('/api/auth/register', {
-          owner_name: name,
-          email,
-          password
-        })
-        // After register — no existing session yet
-        login(data.api_key, null, data.owner, data.email)
-
+        const data = await registerUser(name, email, password)
+        login(
+          {
+            access_token: data.access_token,
+            refresh_token: data.refresh_token
+          },
+          null,
+          data.owner,
+          data.email
+        )
       } else {
-        // Login — get api_key first
-        const { data } = await axios.post('/api/auth/login', {
-          email,
-          password
+        const data = await loginUser(email, password)
+
+        // Temporarily set token to call /auth/me
+        localStorage.setItem('access_token', data.access_token)
+
+        // Get last active session
+        const me = await axios.get('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${data.access_token}` }
         })
 
-        // Temporarily set api_key in localStorage so /auth/me can authenticate
-        localStorage.setItem('api_key', data.api_key)
-
-        // Fetch last active session
-        const meRes = await axios.get('/api/auth/me', {
-          headers: { 'X-API-Key': data.api_key }
-        })
-
-        // Login with restored session_id
-        login(data.api_key, meRes.data.session_id, data.owner, data.email)
+        login(
+          {
+            access_token: data.access_token,
+            refresh_token: data.refresh_token
+          },
+          me.data.session_id,
+          data.owner,
+          data.email
+        )
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Something went wrong.')
+      // Extract error from all possible locations
+      const msg =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Something went wrong. Please try again.'
+
+      // Handle array errors from FastAPI validation
+      if (Array.isArray(msg)) {
+        setError(msg.map((e) => e.msg || e).join(', '))
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -118,7 +134,8 @@ export default function Auth() {
                           bg-gray-950 dark:bg-white mb-4">
             <span className="text-2xl">📄</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">
+          <h1 className="text-2xl font-bold text-gray-900
+                         dark:text-white tracking-tight">
             PDF Assistant
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -153,6 +170,7 @@ export default function Auth() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
 
+          {/* Name — register only */}
           {mode === 'register' && (
             <div>
               <label className="block text-sm font-medium
@@ -170,6 +188,7 @@ export default function Auth() {
             </div>
           )}
 
+          {/* Email */}
           <div>
             <label className="block text-sm font-medium
                               text-gray-700 dark:text-gray-300 mb-1">
@@ -185,6 +204,7 @@ export default function Auth() {
             />
           </div>
 
+          {/* Password */}
           <div>
             <label className="block text-sm font-medium
                               text-gray-700 dark:text-gray-300 mb-1">
@@ -210,10 +230,12 @@ export default function Auth() {
               </button>
             </div>
 
+            {/* Password strength — register only */}
             {mode === 'register' && password.length > 0 && (
               <div className="mt-3 p-3 rounded-xl bg-gray-50 dark:bg-gray-800
                               border border-gray-100 dark:border-gray-700">
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">
+                <p className="text-xs font-medium text-gray-500
+                              dark:text-gray-400 mb-2">
                   Password requirements:
                 </p>
                 <div className="grid grid-cols-2 gap-1">
@@ -234,8 +256,10 @@ export default function Auth() {
                           : 'bg-green-500'
                       : 'bg-gray-200 dark:bg-gray-700'
                     return (
-                      <div key={i}
-                           className={`h-1 flex-1 rounded-full transition-all ${color}`} />
+                      <div
+                        key={i}
+                        className={`h-1 flex-1 rounded-full transition-all ${color}`}
+                      />
                     )
                   })}
                 </div>
@@ -243,6 +267,7 @@ export default function Auth() {
             )}
           </div>
 
+          {/* Confirm password — register only */}
           {mode === 'register' && (
             <div>
               <label className="block text-sm font-medium
@@ -280,12 +305,16 @@ export default function Auth() {
                     ? 'text-green-600 dark:text-green-400'
                     : 'text-red-500 dark:text-red-400'
                 }`}>
-                  {passwordsMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+                  {passwordsMatch
+                    ? '✓ Passwords match'
+                    : '✗ Passwords do not match'
+                  }
                 </p>
               )}
             </div>
           )}
 
+          {/* Error */}
           {error && (
             <div className="px-4 py-3 rounded-xl
                             bg-red-50 dark:bg-red-950
@@ -294,9 +323,13 @@ export default function Auth() {
             </div>
           )}
 
+          {/* Submit */}
           <button
             type="submit"
-            disabled={loading || (mode === 'register' && (!isStrong || !passwordsMatch))}
+            disabled={
+              loading ||
+              (mode === 'register' && (!isStrong || !passwordsMatch))
+            }
             className="w-full py-3 px-4
                        bg-gray-950 dark:bg-white
                        text-white dark:text-gray-950

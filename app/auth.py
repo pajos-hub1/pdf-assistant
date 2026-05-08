@@ -1,61 +1,74 @@
 from fastapi import Security, HTTPException, status, Depends, Header
-from fastapi.security import APIKeyHeader
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from app.database import get_db, APIKey, get_or_create_session
 from typing import Optional
+from app.database import get_db, APIKey, get_or_create_session
+from app.jwt_handler import verify_access_token
 
-API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
+# JWT Bearer scheme
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def validate_api_key(
-    api_key: str = Security(API_KEY_HEADER),
+# ─────────────────────────────────────────
+# CORE JWT VALIDATION
+# ─────────────────────────────────────────
+
+def validate_token(
+    credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
     db: Session = Depends(get_db)
 ) -> APIKey:
-    if not api_key:
+    """
+    Validates the JWT Bearer token.
+    Raises 401 if missing, expired, or invalid.
+    """
+    if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="❌ Missing API key. Add X-API-Key header to your request.",
-            headers={"WWW-Authenticate": "API-Key"}
+            detail="❌ Missing token. Add Authorization: Bearer <token> header.",
+            headers={"WWW-Authenticate": "Bearer"}
         )
 
-    db_key = db.query(APIKey).filter(APIKey.key == api_key).first()
+    # Verify token and extract payload
+    payload = verify_access_token(credentials.credentials)
 
-    if not db_key:
+    # Load user from DB
+    user_id = int(payload.get("sub"))
+    user = db.query(APIKey).filter(APIKey.id == user_id).first()
+
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="❌ Invalid API key.",
-            headers={"WWW-Authenticate": "API-Key"}
+            detail="❌ User not found."
         )
 
-    if not db_key.is_active:
+    if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="❌ This API key has been deactivated. Contact the administrator."
+            detail="❌ Account deactivated."
         )
 
-    return db_key
+    return user
+
+
+# Keep validate_api_key as alias for backward compatibility
+validate_api_key = validate_token
 
 
 def get_current_session(
-    # Read session_id from header — optional, creates new if not provided
     session_id: Optional[str] = Header(None, alias="X-Session-Id"),
-    api_key: APIKey = Depends(validate_api_key),
+    auth: APIKey = Depends(validate_token),
     db: Session = Depends(get_db)
 ):
-    """
-    Gets or creates a session for the current user.
-    Session ID comes from X-Session-Id header.
-    If not provided, a new session is created automatically.
-    """
+    """Gets or creates a session for the current user."""
     session = get_or_create_session(
         db,
-        api_key_id=api_key.id,
+        api_key_id=auth.id,
         session_id=session_id
     )
     return {
         "session": session,
-        "owner": api_key.owner_name,
-        "api_key_id": api_key.id
+        "owner": auth.owner_name,
+        "api_key_id": auth.id
     }
 
 
@@ -64,35 +77,30 @@ def get_current_session(
 # ─────────────────────────────────────────
 
 def deactivate_key(db: Session, key: str) -> bool:
-    """Deactivate an API key — user loses access immediately."""
     db_key = db.query(APIKey).filter(APIKey.key == key).first()
     if db_key:
         db_key.is_active = False
         db.commit()
-        print(f"🔒 API key deactivated: {key}")
         return True
     return False
 
 
 def reactivate_key(db: Session, key: str) -> bool:
-    """Reactivate a previously deactivated API key."""
     db_key = db.query(APIKey).filter(APIKey.key == key).first()
     if db_key:
         db_key.is_active = True
         db.commit()
-        print(f"🔓 API key reactivated: {key}")
         return True
     return False
 
 
 def list_all_keys(db: Session) -> list:
-    """List all API keys — for admin use."""
     keys = db.query(APIKey).all()
     return [
         {
             "id": k.id,
             "owner": k.owner_name,
-            "key": k.key,
+            "email": k.email,
             "is_active": k.is_active,
             "created_at": k.created_at
         }

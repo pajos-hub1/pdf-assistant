@@ -12,7 +12,7 @@ export function useStream() {
   ) => {
     setStreaming(true)
 
-    const apiKey = localStorage.getItem('api_key')
+    const accessToken = localStorage.getItem('access_token')
     const sessionId = localStorage.getItem('session_id')
 
     try {
@@ -20,7 +20,7 @@ export function useStream() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey || '',
+          'Authorization': `Bearer ${accessToken || ''}`,
           'X-Session-Id': sessionId || ''
         },
         body: JSON.stringify({ question })
@@ -51,12 +51,10 @@ export function useStream() {
         try {
           const data = JSON.parse(jsonStr)
 
-          // Handle token
           if (data.token !== undefined && data.token !== null) {
             onToken(data.token)
           }
 
-          // Handle done
           if (data.done === true) {
             onDone({
               confidence: data.confidence || '0%',
@@ -66,12 +64,11 @@ export function useStream() {
             })
           }
 
-          // Handle late suggestions event
+          // Late suggestions event
           if (data.suggestions && !data.done && onSuggestions) {
             onSuggestions(data.suggestions)
           }
 
-          // Handle error from backend
           if (data.error) {
             onError(data.error)
           }
@@ -87,10 +84,7 @@ export function useStream() {
 
         buffer += decoder.decode(value, { stream: true })
 
-        // Split on double newlines — SSE event separator
         const events = buffer.split('\n\n')
-
-        // Keep last potentially incomplete event in buffer
         buffer = events.pop() || ''
 
         for (const event of events) {

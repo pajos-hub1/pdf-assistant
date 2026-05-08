@@ -13,7 +13,8 @@ from app.chain import (
     generate_suggestions, ollama_stream,
     get_session_history
 )
-from app.logger import log_query, log_error
+from app.logger import log_query
+from app.sanitizer import sanitize_text
 from langchain_core.messages import HumanMessage, AIMessage
 import time
 import json
@@ -81,6 +82,9 @@ async def ask_stream(
     owner = auth["owner"]
     start_time = time.time()
 
+    # Sanitize input — inside the function where body is available
+    question = sanitize_text(body.question, max_length=1000)
+
     session_data = get_session_chain(session.id)
     if not session_data:
         raise HTTPException(
@@ -90,12 +94,14 @@ async def ask_stream(
 
     vector_store = get_session_store(session.id)
 
-    language = detect_language(body.question)
+    # Detect language
+    language = detect_language(question)
     if not language or language.lower() == "none":
         language = "English"
 
+    # Get docs + confidence
     docs_with_scores = vector_store.similarity_search_with_score(
-        body.question, k=5
+        question, k=5
     )
     docs = [doc for doc, score in docs_with_scores]
     scores = [score for doc, score in docs_with_scores]
@@ -105,6 +111,7 @@ async def ask_stream(
     ]))
     context = "\n\n".join([doc.page_content for doc in docs])
 
+    # Load history from DB
     records = (
         db.query(ChatHistoryModel)
         .filter(ChatHistoryModel.session_id == session.id)
@@ -116,20 +123,23 @@ async def ask_stream(
         history.append(HumanMessage(content=record.question))
         history.append(AIMessage(content=record.answer))
 
+    print(f"📚 History loaded: {len(records)} messages")
+
     state = {"full_answer": [], "suggestions": []}
 
     def generate():
         try:
-            for token in ollama_stream(body.question, context, history):
+            for token in ollama_stream(question, context, history):
                 state["full_answer"].append(token)
                 yield f"data: {json.dumps({'token': token})}\n\n"
 
             complete_answer = "".join(state["full_answer"])
+            print(f"✅ Stream complete — length: {len(complete_answer)}")
 
             save_chat(
                 db=db,
                 session_id=session.id,
-                question=body.question,
+                question=question,
                 answer=complete_answer,
                 language=language,
                 confidence=confidence,
@@ -141,7 +151,7 @@ async def ask_stream(
             log_query(
                 session_id=session.id,
                 owner=owner,
-                question=body.question,
+                question=question,
                 answer=complete_answer,
                 language=language,
                 confidence=confidence,
@@ -151,7 +161,7 @@ async def ask_stream(
 
             yield f"data: {json.dumps({'done': True, 'confidence': confidence, 'sources': sources, 'suggestions': [], 'language': language})}\n\n"
 
-            suggestions = generate_suggestions(body.question, complete_answer)
+            suggestions = generate_suggestions(question, complete_answer)
             if suggestions:
                 yield f"data: {json.dumps({'suggestions': suggestions})}\n\n"
 

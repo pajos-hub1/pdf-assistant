@@ -2,24 +2,71 @@ import axios from 'axios'
 
 const API_BASE = '/api'
 
-const api = axios.create({
-  baseURL: API_BASE,
-})
+const api = axios.create({ baseURL: API_BASE })
 
+// Attach JWT token to every request
 api.interceptors.request.use((config) => {
-  const apiKey = localStorage.getItem('api_key')
+  const accessToken = localStorage.getItem('access_token')
   const sessionId = localStorage.getItem('session_id')
-  if (apiKey) config.headers['X-API-Key'] = apiKey
+  if (accessToken) config.headers['Authorization'] = `Bearer ${accessToken}`
   if (sessionId) config.headers['X-Session-Id'] = sessionId
   return config
 })
+
+// Auto-refresh on 401 — but NOT for auth endpoints
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const original = error.config
+
+    // Skip refresh for auth endpoints — show original error
+    const isAuthEndpoint = original.url?.includes('/auth/')
+    if (isAuthEndpoint) {
+      return Promise.reject(error)
+    }
+
+    if (error.response?.status === 401 && !original._retry) {
+      original._retry = true
+
+      try {
+        const refreshToken = localStorage.getItem('refresh_token')
+        if (!refreshToken) throw new Error('No refresh token')
+
+        const { data } = await axios.post(`${API_BASE}/auth/refresh`, {
+          refresh_token: refreshToken
+        })
+
+        localStorage.setItem('access_token', data.access_token)
+        localStorage.setItem('refresh_token', data.refresh_token)
+
+        original.headers['Authorization'] = `Bearer ${data.access_token}`
+        return api(original)
+      } catch (refreshErr) {
+        localStorage.clear()
+        window.location.reload()
+        return Promise.reject(refreshErr)
+      }
+    }
+
+    return Promise.reject(error)
+  }
+)
 
 // ─────────────────────────────────────────
 // AUTH
 // ─────────────────────────────────────────
 
-export const register = async (ownerName) => {
-  const response = await api.post('/auth/register', { owner_name: ownerName })
+export const registerUser = async (ownerName, email, password) => {
+  const response = await api.post('/auth/register', {
+    owner_name: ownerName,
+    email,
+    password
+  })
+  return response.data
+}
+
+export const loginUser = async (email, password) => {
+  const response = await api.post('/auth/login', { email, password })
   return response.data
 }
 
@@ -62,6 +109,18 @@ export const getChatDocuments = async (sessionId) => {
   return response.data
 }
 
+export const exportChat = async (sessionId, format = 'txt') => {
+  const accessToken = localStorage.getItem('access_token')
+  const response = await fetch(
+    `/api/chats/${sessionId}/export?format=${format}`,
+    {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    }
+  )
+  if (!response.ok) throw new Error('Export failed')
+  return response
+}
+
 // ─────────────────────────────────────────
 // DOCUMENTS
 // ─────────────────────────────────────────
@@ -91,13 +150,8 @@ export const clearDocuments = async () => {
 }
 
 // ─────────────────────────────────────────
-// CHAT / QA
+// QA
 // ─────────────────────────────────────────
-
-export const askQuestion = async (question) => {
-  const response = await api.post('/ask', { question })
-  return response.data
-}
 
 export const getHistory = async () => {
   const response = await api.get('/history')
@@ -116,18 +170,4 @@ export const clearHistory = async () => {
 export const healthCheck = async () => {
   const response = await api.get('/health')
   return response.data
-}
-
-export const exportChat = async (sessionId, format = 'txt') => {
-  const apiKey = localStorage.getItem('api_key')
-  const response = await fetch(
-    `/api/chats/${sessionId}/export?format=${format}`,
-    {
-      headers: {
-        'X-API-Key': apiKey || ''
-      }
-    }
-  )
-  if (!response.ok) throw new Error('Export failed')
-  return response
 }

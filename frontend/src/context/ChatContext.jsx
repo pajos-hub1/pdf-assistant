@@ -6,9 +6,9 @@ const ChatContext = createContext(null)
 const api = axios.create({ baseURL: '/api' })
 
 api.interceptors.request.use((config) => {
-  const apiKey = localStorage.getItem('api_key')
+  const accessToken = localStorage.getItem('access_token')
   const sessionId = localStorage.getItem('session_id')
-  if (apiKey) config.headers['X-API-Key'] = apiKey
+  if (accessToken) config.headers['Authorization'] = `Bearer ${accessToken}`
   if (sessionId) config.headers['X-Session-Id'] = sessionId
   return config
 })
